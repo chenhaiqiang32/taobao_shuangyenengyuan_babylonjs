@@ -34,6 +34,9 @@ export class AppOrchestrator {
     this.config = cloneConfig(config)
     const engine = createEngine(this.canvas, this.config.engine)
     const scene = new Scene(engine)
+    // glTF/GLB 为右手系；开启后加载器不再对 __root__ 做 [1,1,-1] 镜像补偿，
+    // 避免后续 applyTransform 覆盖缩放导致整模左右颠倒。
+    scene.useRightHandedSystem = true
 
     this.ctx = {
       canvas: this.canvas,

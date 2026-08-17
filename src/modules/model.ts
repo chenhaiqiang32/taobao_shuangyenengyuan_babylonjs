@@ -5,7 +5,7 @@ import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import type { AnimationGroup } from '@babylonjs/core/Animations/animationGroup'
 import type { AssetContainer } from '@babylonjs/core/assetContainer'
 import type { Node } from '@babylonjs/core/node'
-import type { TransformNode } from '@babylonjs/core/Meshes/transformNode'
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import type { ModelAnimationConfig, ModelConfig, Vec3 } from '../config/types'
 import { withBase } from '../config/baseUrl'
 import type { AppContext, SceneModule } from '../core/types'
@@ -24,7 +24,10 @@ export class ModelModule implements SceneModule<ModelConfig> {
   readonly name = 'model'
   private ctx: AppContext | null = null
   private container: AssetContainer | null = null
+  /** glTF 加载器创建的 __root__（可能含坐标系变换，勿被业务缩放覆盖） */
   private root: TransformNode | null = null
+  /** 业务变换用的外层节点（位移/旋转/缩放只改这里） */
+  private pivot: TransformNode | null = null
   private lastUrl = ''
   private cameraModule: CameraModule | null = null
   private animationGroups: AnimationGroup[] = []
@@ -86,6 +89,13 @@ export class ModelModule implements SceneModule<ModelConfig> {
       container.addAllToScene()
       this.container = container
       this.root = (container.rootNodes[0] as TransformNode | undefined) ?? null
+
+      // 外层 pivot 承载业务变换，保留 __root__ 的手性/加载器变换
+      this.pivot = new TransformNode('modelPivot', scene)
+      if (this.root) {
+        this.root.parent = this.pivot
+      }
+
       this.animationGroups = [...container.animationGroups]
       this.lastUrl = url
       console.info(
@@ -251,10 +261,11 @@ export class ModelModule implements SceneModule<ModelConfig> {
   }
 
   private applyTransform(config: ModelConfig): void {
-    if (!this.root) return
-    this.root.position = Vector3.FromArray(config.position)
-    this.root.rotation = Vector3.FromArray(config.rotation)
-    this.root.scaling = Vector3.FromArray(config.scaling)
+    const target = this.pivot ?? this.root
+    if (!target) return
+    target.position = Vector3.FromArray(config.position)
+    target.rotation = Vector3.FromArray(config.rotation)
+    target.scaling = Vector3.FromArray(config.scaling)
   }
 
   private applyShadowFlags(config: ModelConfig): void {
@@ -470,12 +481,13 @@ export class ModelModule implements SceneModule<ModelConfig> {
 
   private centerModel(): void {
     const meshes = this.getMeshes()
-    if (!meshes.length || !this.root) return
+    const target = this.pivot ?? this.root
+    if (!meshes.length || !target) return
 
     const bounds = this.computeBounds(meshes)
     if (!bounds) return
-    this.root.position.subtractInPlace(bounds.center)
-    this.root.computeWorldMatrix(true)
+    target.position.subtractInPlace(bounds.center)
+    target.computeWorldMatrix(true)
   }
 
   private clearModel(): void {
@@ -488,6 +500,9 @@ export class ModelModule implements SceneModule<ModelConfig> {
     this.container?.removeAllFromScene()
     this.container?.dispose()
     this.container = null
+    // root 随 container dispose；pivot 需单独释放
+    this.pivot?.dispose()
+    this.pivot = null
     this.root = null
     this.lastUrl = ''
   }

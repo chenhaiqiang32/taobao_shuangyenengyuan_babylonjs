@@ -2,13 +2,13 @@
 
 默认天空盒与 IBL 使用：
 
-- `horn-koppe_spring_1k.hdr`
+- `rural_evening_road_1k.hdr`
 
 在 `public/config/scene.json` 中配置：
 
 ```json
 "skybox": {
-  "hdrUrl": "/hdr/horn-koppe_spring_1k.hdr",
+  "hdrUrl": "/hdr/rural_evening_road_1k.hdr",
   "format": "hdr",
   "asEnvironmentTexture": true,
   "showMesh": true

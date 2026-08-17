@@ -128,7 +128,7 @@ export function createParamsPanel(app: AppOrchestrator): GUI {
     })
 
   const hdrPresets: Record<string, string> = {
-    '本地 horn-koppe': '/hdr/horn-koppe_spring_1k.hdr',
+    '本地 horn-koppe': '/hdr/rural_evening_road_1k.hdr',
     'Babylon env(CDN)': 'https://assets.babylonjs.com/environments/environmentSpecular.env',
     自定义: config.skybox.hdrUrl,
   }
