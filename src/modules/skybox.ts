@@ -1,6 +1,7 @@
 import { CubeTexture } from '@babylonjs/core/Materials/Textures/cubeTexture'
 import { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture'
 import '@babylonjs/core/Materials/Textures/Loaders/envTextureLoader'
+import '@babylonjs/core/Materials/Textures/Loaders/hdrTextureLoader'
 import '@babylonjs/core/Helpers/sceneHelpers'
 import type { BaseTexture } from '@babylonjs/core/Materials/Textures/baseTexture'
 import type { Mesh } from '@babylonjs/core/Meshes/mesh'

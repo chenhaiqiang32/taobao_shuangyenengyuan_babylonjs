@@ -72,10 +72,10 @@
   ],
   "skybox": {
     "enabled": true,
-    "hdrUrl": "https://assets.babylonjs.com/environments/environmentSpecular.env",
-    "format": "env",
+    "hdrUrl": "/hdr/horn-koppe_spring_1k.hdr",
+    "format": "hdr",
     "size": 10000,
-    "blur": 0.5,
+    "blur": 0.3,
     "asEnvironmentTexture": true,
     "showMesh": true,
     "rotationY": 0,
@@ -93,7 +93,8 @@
     "receiveShadows": true,
     "castShadows": true,
     "playAnimationsByDefault": true,
-    "animations": []
+    "animations": [],
+    "fixTransparentDepth": true
   },
   "settings": {
     "exposure": 1,

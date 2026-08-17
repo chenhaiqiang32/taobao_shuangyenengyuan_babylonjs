@@ -77,11 +77,11 @@ export function createDefaultConfig(): SceneAppConfig {
     ],
     skybox: {
       enabled: true,
-      // Babylon CDN 预过滤环境，开箱可用；可换成 /env/*.env 或 *.hdr
-      hdrUrl: 'https://assets.babylonjs.com/environments/environmentSpecular.env',
-      format: 'env',
+      // 默认本地 HDR：同时作为天空盒网格 + IBL 环境贴图
+      hdrUrl: '/hdr/horn-koppe_spring_1k.hdr',
+      format: 'hdr',
       size: 10000,
-      blur: 0.5,
+      blur: 0.3,
       asEnvironmentTexture: true,
       showMesh: true,
       rotationY: 0,
@@ -100,6 +100,7 @@ export function createDefaultConfig(): SceneAppConfig {
       castShadows: true,
       playAnimationsByDefault: true,
       animations: [],
+      fixTransparentDepth: true,
     },
     settings: {
       exposure: 1,

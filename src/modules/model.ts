@@ -10,6 +10,9 @@ import type { ModelAnimationConfig, ModelConfig, Vec3 } from '../config/types'
 import { withBase } from '../config/baseUrl'
 import type { AppContext, SceneModule } from '../core/types'
 import type { CameraModule } from './camera'
+import { Material } from '@babylonjs/core/Materials/material'
+import { MultiMaterial } from '@babylonjs/core/Materials/multiMaterial'
+import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial'
 
 export interface ModelBounds {
   center: Vector3
@@ -62,8 +65,14 @@ export class ModelModule implements SceneModule<ModelConfig> {
     }
 
     if (justLoaded) {
+      if (config.fixTransparentDepth) {
+        this.fixTransparentMaterials()
+      }
       this.syncAnimationsToConfig(config)
       this.bindControlsAndCamera()
+    } else if (config.fixTransparentDepth) {
+      // 配置开关从关到开时补一次修复
+      this.fixTransparentMaterials()
     }
 
     this.applyAnimations(config)
@@ -256,6 +265,99 @@ export class ModelModule implements SceneModule<ModelConfig> {
         ;(mesh as AbstractMesh & { castShadows: boolean }).castShadows = config.castShadows
       }
     }
+  }
+
+  /**
+   * 修复透明材质因叠加/排序导致旋转时面片消失的问题。
+   * - Alpha 混合：depthPrePass + forceDepthWrite
+   * - 接近镂空的透明度：改用 AlphaTest，减少排序错误
+   * - 透明网格延后到 renderingGroupId=1，且不清理深度缓冲
+   */
+  fixTransparentMaterials(): void {
+    const scene = this.ctx?.scene
+    const container = this.container
+    if (!scene || !container) return
+
+    // 组 1 渲染时保留组 0 的深度，便于透明片与实体正确遮挡
+    scene.setRenderingAutoClearDepthStencil(1, false, false, false)
+
+    const processed = new Set<Material>()
+    let fixedCount = 0
+
+    for (const mesh of container.meshes) {
+      if (!mesh.material) continue
+      const touched = this.fixMaterialTree(mesh.material, processed)
+      if (touched > 0) {
+        fixedCount += touched
+        // 透明物体放到稍后的渲染组，先画不透明再画透明
+        if (this.materialNeedsAlpha(mesh.material)) {
+          mesh.renderingGroupId = 1
+        }
+      }
+    }
+
+    if (fixedCount > 0) {
+      console.info(`[model] fixed transparent materials: ${fixedCount}`)
+    }
+  }
+
+  private materialNeedsAlpha(mat: Material | null): boolean {
+    if (!mat) return false
+    if (mat instanceof MultiMaterial) {
+      return mat.subMaterials.some((m) => this.materialNeedsAlpha(m))
+    }
+    if (mat.needAlphaBlending?.() || mat.needAlphaTesting?.()) return true
+    const mode = mat.transparencyMode
+    if (
+      mode === Material.MATERIAL_ALPHABLEND ||
+      mode === Material.MATERIAL_ALPHATEST ||
+      mode === Material.MATERIAL_ALPHATESTANDBLEND
+    ) {
+      return true
+    }
+    if (mat instanceof PBRMaterial) {
+      if (mat.alpha < 1) return true
+      if (mat.albedoTexture?.hasAlpha && mat.useAlphaFromAlbedoTexture) return true
+    }
+    return false
+  }
+
+  private fixMaterialTree(mat: Material | null, processed: Set<Material>): number {
+    if (!mat || processed.has(mat)) return 0
+    processed.add(mat)
+
+    if (mat instanceof MultiMaterial) {
+      let total = 0
+      for (const sub of mat.subMaterials) {
+        total += this.fixMaterialTree(sub, processed)
+      }
+      return total
+    }
+
+    if (!this.materialNeedsAlpha(mat)) return 0
+
+    // 接近 0/1 镂空：AlphaTest 比 Blend 更稳，避免半透明排序花屏/消失
+    if (mat instanceof PBRMaterial) {
+      const alpha = mat.alpha
+      const hasTexAlpha = !!(mat.albedoTexture?.hasAlpha && mat.useAlphaFromAlbedoTexture)
+      if (
+        (alpha < 0.02 || alpha > 0.98) &&
+        hasTexAlpha &&
+        mat.transparencyMode === Material.MATERIAL_ALPHABLEND
+      ) {
+        mat.transparencyMode = Material.MATERIAL_ALPHATEST
+        mat.alphaCutOff = 0.4
+      }
+    }
+
+    mat.needDepthPrePass = true
+    mat.forceDepthWrite = true
+    // 双面透明时减少“背面先写深度导致正面被剔”的情况
+    if (mat instanceof PBRMaterial && mat.alpha < 1) {
+      mat.separateCullingPass = true
+    }
+
+    return 1
   }
 
   private getMeshes(): AbstractMesh[] {

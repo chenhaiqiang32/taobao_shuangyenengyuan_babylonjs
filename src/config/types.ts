@@ -114,6 +114,11 @@ export interface ModelConfig {
   playAnimationsByDefault: boolean
   /** 模型动画清单：加载时自动同步记录，可逐个控制 */
   animations: ModelAnimationConfig[]
+  /**
+   * 修复透明材质深度/叠加排序（旋转相机时透明面消失）。
+   * 对 Alpha 混合材质开启 depthPrePass + forceDepthWrite。
+   */
+  fixTransparentDepth: boolean
 }
 
 export interface SettingsConfig {

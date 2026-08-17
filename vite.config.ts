@@ -9,8 +9,10 @@ export default defineConfig({
     emptyOutDir: true,
     assetsDir: 'assets',
   },
-  // preview 时也按 docs 目录预览
-  preview: {
-    // vite preview 默认读 outDir
+  server: {
+    // 忽略浏览器下载中的临时文件，避免 EBUSY 弄崩 file watcher
+    watch: {
+      ignored: ['**/*.crdownload', '**/docs/**'],
+    },
   },
 })

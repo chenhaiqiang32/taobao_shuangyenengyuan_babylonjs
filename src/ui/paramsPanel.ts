@@ -110,23 +110,64 @@ export function createParamsPanel(app: AppOrchestrator): GUI {
     bindLightFolder(lightsFolder, light, config, app)
   }
 
-  const skyFolder = gui.addFolder('Skybox')
-  skyFolder.add(config.skybox, 'enabled').onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'showMesh').onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'asEnvironmentTexture').onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'format', ['env', 'hdr']).onFinishChange(() => {
-    void app.applySection('skybox', config.skybox, { forceRecreate: true })
-  })
-  skyFolder.add(config.skybox, 'hdrUrl').onFinishChange(() => {
-    void app.applySection('skybox', config.skybox, { forceRecreate: true })
-  })
-  skyFolder.add(config.skybox, 'size', 10, 5000, 10).onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'blur', 0, 1, 0.01).onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'rotationY', -Math.PI, Math.PI, 0.01).onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'level', 0, 4, 0.01).onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'hdrSize', 64, 512, 64).onFinishChange(() => {
-    void app.applySection('skybox', config.skybox, { forceRecreate: true })
-  })
+  const skyFolder = gui.addFolder('Skybox / HDR')
+  skyFolder.add(config.skybox, 'enabled').name('启用天空盒').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder
+    .add(config.skybox, 'showMesh')
+    .name('显示天空盒网格')
+    .onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder
+    .add(config.skybox, 'asEnvironmentTexture')
+    .name('作为HDR环境贴图(IBL)')
+    .onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder
+    .add(config.skybox, 'format', ['hdr', 'env'])
+    .name('格式')
+    .onFinishChange(() => {
+      void app.applySection('skybox', config.skybox, { forceRecreate: true })
+    })
+
+  const hdrPresets: Record<string, string> = {
+    '本地 horn-koppe': '/hdr/horn-koppe_spring_1k.hdr',
+    'Babylon env(CDN)': 'https://assets.babylonjs.com/environments/environmentSpecular.env',
+    自定义: config.skybox.hdrUrl,
+  }
+  const skyPresetState = {
+    preset:
+      Object.entries(hdrPresets).find(([, url]) => url === config.skybox.hdrUrl)?.[0] ?? '自定义',
+  }
+  skyFolder
+    .add(skyPresetState, 'preset', Object.keys(hdrPresets))
+    .name('贴图预设')
+    .onChange((name: string) => {
+      const url = hdrPresets[name]
+      if (!url || name === '自定义') return
+      config.skybox.hdrUrl = url
+      config.skybox.format = url.endsWith('.hdr') ? 'hdr' : 'env'
+      void app.applySection('skybox', config.skybox, { forceRecreate: true })
+      gui.controllersRecursive().forEach((c) => c.updateDisplay())
+    })
+
+  skyFolder
+    .add(config.skybox, 'hdrUrl')
+    .name('hdrUrl 路径')
+    .onFinishChange(() => {
+      skyPresetState.preset = '自定义'
+      if (config.skybox.hdrUrl.endsWith('.hdr')) config.skybox.format = 'hdr'
+      else if (config.skybox.hdrUrl.endsWith('.env')) config.skybox.format = 'env'
+      void app.applySection('skybox', config.skybox, { forceRecreate: true })
+      gui.controllersRecursive().forEach((c) => c.updateDisplay())
+    })
+  skyFolder.add(config.skybox, 'size', 10, 20000, 10).name('天空盒尺寸').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder.add(config.skybox, 'blur', 0, 1, 0.01).name('模糊').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder.add(config.skybox, 'rotationY', -Math.PI, Math.PI, 0.01).name('旋转Y').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder.add(config.skybox, 'level', 0, 4, 0.01).name('强度 level').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder
+    .add(config.skybox, 'hdrSize', 64, 512, 64)
+    .name('HDR立方体尺寸')
+    .onFinishChange(() => {
+      void app.applySection('skybox', config.skybox, { forceRecreate: true })
+    })
 
   const modelFolder = gui.addFolder('Model')
   modelFolder.add(config.model, 'enabled').onChange(() => void app.applySection('model', config.model))
@@ -138,6 +179,12 @@ export function createParamsPanel(app: AppOrchestrator): GUI {
   addVec3(modelFolder, config.model.scaling, 'scaling', () => void app.applySection('model', config.model))
   modelFolder.add(config.model, 'autoCenter').onChange(() => void app.applySection('model', config.model))
   modelFolder.add(config.model, 'autoFitCamera').onChange(() => void app.applySection('model', config.model))
+  modelFolder
+    .add(config.model, 'fixTransparentDepth')
+    .name('修复透明深度叠加')
+    .onChange(() => {
+      void app.applySection('model', config.model, { forceRecreate: true })
+    })
 
   const animFolder = modelFolder.addFolder('Animations')
   animFolder
