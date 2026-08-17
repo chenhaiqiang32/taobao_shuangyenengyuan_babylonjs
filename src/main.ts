@@ -1,7 +1,7 @@
 import './style.css'
 import { loadConfig } from './config/loadConfig'
 import { AppOrchestrator } from './core/app'
-import { createParamsPanel } from './ui/paramsPanel'
+// import { createParamsPanel } from './ui/paramsPanel'
 import { createBusinessFeatures, type BusinessFeaturesGlobal } from './business/features'
 import { createRoofToggleButton } from './ui/roofToggleButton'
 
