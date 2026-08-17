@@ -18,7 +18,7 @@ async function bootstrap(): Promise<void> {
   const config = await loadConfig()
   const app = new AppOrchestrator(canvas)
   await app.init(config)
-  createParamsPanel(app)
+  // createParamsPanel(app)
 
   // 业务功能：抛出给外部 / 控制台使用
   const business = createBusinessFeatures(app)
