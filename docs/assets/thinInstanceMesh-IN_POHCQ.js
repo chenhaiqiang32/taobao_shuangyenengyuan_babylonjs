@@ -1,0 +1,1 @@
+import{n as e}from"./rolldown-runtime-B0Z9INg1.js";import{n as t,t as n}from"./thinInstanceMesh.pure-unaksagy.js";var r=e((()=>{})),i=e((()=>{r(),t(),t(),n()}));export{i as t};

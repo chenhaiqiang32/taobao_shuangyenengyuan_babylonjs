@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./rolldown-runtime-B0Z9INg1.js";import{a as n,c as r,i,n as a,o,r as s,s as c,t as l}from"./dumpTools.pure-D_Ix1tGl.js";var u=t({Dispose:()=>l,DumpData:()=>a,DumpDataAsync:()=>s,DumpFramebuffer:()=>i,DumpTools:()=>n,EncodeImageAsync:()=>o,RegisterDumpTools:()=>c}),d=e((()=>{r(),r(),c()}));export{d as n,u as t};

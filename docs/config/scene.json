@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "controlsModelName": "广州双叶厂房",
+  "cameraRadiusFactor": 1,
+  "engine": {
+    "antialias": true,
+    "adaptToDeviceRatio": true,
+    "hardwareScalingLevel": 1
+  },
+  "scene": {
+    "clearColor": [0.05, 0.07, 0.1, 1],
+    "ambientColor": [0.1, 0.1, 0.1],
+    "environmentIntensity": 1,
+    "fog": {
+      "enabled": false,
+      "mode": "exp2",
+      "color": [0.7, 0.8, 0.9],
+      "density": 0.01,
+      "start": 20,
+      "end": 200
+    }
+  },
+  "camera": {
+    "type": "arcRotate",
+    "name": "mainCamera",
+    "alpha": -1.5707963267948966,
+    "beta": 1.2,
+    "radius": 80,
+    "target": [0, 5, 0],
+    "minZ": 0.5,
+    "maxZ": 100000,
+    "lowerRadiusLimit": 1,
+    "upperRadiusLimit": 50000,
+    "lowerBetaLimit": 0.01,
+    "upperBetaLimit": 3.131592653589793,
+    "fov": 0.8
+  },
+  "controller": {
+    "attachControl": true,
+    "target": [0, 0, 0],
+    "panningSensibility": 50,
+    "wheelPrecision": 3,
+    "wheelDeltaPercentage": 0.01,
+    "angularSensibilityX": 500,
+    "angularSensibilityY": 500,
+    "inertia": 0.9,
+    "pinchPrecision": 12,
+    "useCtrlForPanning": false,
+    "panningMouseButton": 2,
+    "allowPan": true,
+    "allowZoom": true,
+    "allowRotate": true
+  },
+  "lights": [
+    {
+      "id": "hemi",
+      "type": "hemispheric",
+      "enabled": true,
+      "intensity": 0.6,
+      "color": [1, 1, 1],
+      "direction": [0, 1, 0],
+      "specular": [1, 1, 1]
+    },
+    {
+      "id": "sun",
+      "type": "directional",
+      "enabled": true,
+      "intensity": 1.2,
+      "color": [1, 0.98, 0.95],
+      "direction": [-0.5, -1, -0.3]
+    }
+  ],
+  "skybox": {
+    "enabled": true,
+    "hdrUrl": "https://assets.babylonjs.com/environments/environmentSpecular.env",
+    "format": "env",
+    "size": 10000,
+    "blur": 0.5,
+    "asEnvironmentTexture": true,
+    "showMesh": true,
+    "rotationY": 0,
+    "level": 1,
+    "hdrSize": 256
+  },
+  "model": {
+    "url": "/models/广州双叶厂房.glb",
+    "enabled": true,
+    "position": [0, 0, 0],
+    "rotation": [0, 0, 0],
+    "scaling": [1, 1, 1],
+    "autoCenter": true,
+    "autoFitCamera": true,
+    "receiveShadows": true,
+    "castShadows": true,
+    "playAnimationsByDefault": true,
+    "animations": []
+  },
+  "settings": {
+    "exposure": 1,
+    "contrast": 1,
+    "toneMappingEnabled": true,
+    "toneMappingType": "aces",
+    "shadowsEnabled": false,
+    "inspectorEnabled": false,
+    "showFps": true
+  }
+}

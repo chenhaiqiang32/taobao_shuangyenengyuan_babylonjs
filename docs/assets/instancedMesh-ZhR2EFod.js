@@ -1,0 +1,1 @@
+import{n as e}from"./rolldown-runtime-B0Z9INg1.js";import{n as t,r as n}from"./instancedMesh.pure-B99GrC7H.js";var r=e((()=>{})),i=e((()=>{r(),n(),n(),t()}));export{i as t};
