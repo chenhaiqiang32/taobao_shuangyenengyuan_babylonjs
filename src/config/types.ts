@@ -78,12 +78,20 @@ export interface LightConfig {
 
 export interface SkyboxConfig {
   enabled: boolean
+  /** HDR/ENV 环境贴图路径（用于 IBL 光照与反射） */
   hdrUrl: string
   format: 'env' | 'hdr'
   size: number
   blur: number
+  /** 是否把 HDR/ENV 赋给 scene.environmentTexture（不影响背景图） */
   asEnvironmentTexture: boolean
+  /** 是否显示天空/背景网格 */
   showMesh: boolean
+  /**
+   * 场景背景全景图（等距柱状 JPG/PNG），仅作背景显示，不参与 IBL。
+   * 有值时用 PhotoDome 显示；无值且 showMesh 时回退用 HDR 天空盒。
+   */
+  backgroundUrl: string
   rotationY: number
   level: number
   hdrSize: number

@@ -111,24 +111,50 @@ export function createParamsPanel(app: AppOrchestrator): GUI {
   }
 
   const skyFolder = gui.addFolder('Skybox / HDR')
-  skyFolder.add(config.skybox, 'enabled').name('启用天空盒').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder.add(config.skybox, 'enabled').name('启用').onChange(() => void app.applySection('skybox', config.skybox))
   skyFolder
     .add(config.skybox, 'showMesh')
-    .name('显示天空盒网格')
+    .name('显示背景')
     .onChange(() => void app.applySection('skybox', config.skybox))
   skyFolder
     .add(config.skybox, 'asEnvironmentTexture')
-    .name('作为HDR环境贴图(IBL)')
+    .name('HDR作为环境贴图(IBL)')
     .onChange(() => void app.applySection('skybox', config.skybox))
+
+  skyFolder
+    .add(config.skybox, 'backgroundUrl')
+    .name('背景图 backgroundUrl')
+    .onFinishChange(() => {
+      void app.applySection('skybox', config.skybox, { forceRecreate: true })
+    })
+  const bgPresets: Record<string, string> = {
+    sunny: '/sunny.jpg',
+    无背景图: '',
+    自定义: config.skybox.backgroundUrl,
+  }
+  const bgPresetState = {
+    preset:
+      Object.entries(bgPresets).find(([, url]) => url === config.skybox.backgroundUrl)?.[0] ?? '自定义',
+  }
+  skyFolder
+    .add(bgPresetState, 'preset', Object.keys(bgPresets))
+    .name('背景预设')
+    .onChange((name: string) => {
+      if (name === '自定义') return
+      config.skybox.backgroundUrl = bgPresets[name] ?? ''
+      void app.applySection('skybox', config.skybox, { forceRecreate: true })
+      gui.controllersRecursive().forEach((c) => c.updateDisplay())
+    })
+
   skyFolder
     .add(config.skybox, 'format', ['hdr', 'env'])
-    .name('格式')
+    .name('HDR格式')
     .onFinishChange(() => {
       void app.applySection('skybox', config.skybox, { forceRecreate: true })
     })
 
   const hdrPresets: Record<string, string> = {
-    '本地 horn-koppe': '/hdr/rural_evening_road_1k.hdr',
+    '本地 rural_evening': '/hdr/rural_evening_road_1k.hdr',
     'Babylon env(CDN)': 'https://assets.babylonjs.com/environments/environmentSpecular.env',
     自定义: config.skybox.hdrUrl,
   }
@@ -138,7 +164,7 @@ export function createParamsPanel(app: AppOrchestrator): GUI {
   }
   skyFolder
     .add(skyPresetState, 'preset', Object.keys(hdrPresets))
-    .name('贴图预设')
+    .name('HDR贴图预设')
     .onChange((name: string) => {
       const url = hdrPresets[name]
       if (!url || name === '自定义') return
@@ -158,10 +184,10 @@ export function createParamsPanel(app: AppOrchestrator): GUI {
       void app.applySection('skybox', config.skybox, { forceRecreate: true })
       gui.controllersRecursive().forEach((c) => c.updateDisplay())
     })
-  skyFolder.add(config.skybox, 'size', 10, 20000, 10).name('天空盒尺寸').onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'blur', 0, 1, 0.01).name('模糊').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder.add(config.skybox, 'size', 10, 20000, 10).name('背景/天空尺寸').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder.add(config.skybox, 'blur', 0, 1, 0.01).name('HDR天空模糊').onChange(() => void app.applySection('skybox', config.skybox))
   skyFolder.add(config.skybox, 'rotationY', -Math.PI, Math.PI, 0.01).name('旋转Y').onChange(() => void app.applySection('skybox', config.skybox))
-  skyFolder.add(config.skybox, 'level', 0, 4, 0.01).name('强度 level').onChange(() => void app.applySection('skybox', config.skybox))
+  skyFolder.add(config.skybox, 'level', 0, 4, 0.01).name('HDR强度 level').onChange(() => void app.applySection('skybox', config.skybox))
   skyFolder
     .add(config.skybox, 'hdrSize', 64, 512, 64)
     .name('HDR立方体尺寸')

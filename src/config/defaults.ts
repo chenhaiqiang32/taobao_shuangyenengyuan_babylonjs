@@ -77,13 +77,14 @@ export function createDefaultConfig(): SceneAppConfig {
     ],
     skybox: {
       enabled: true,
-      // 默认本地 HDR：同时作为天空盒网格 + IBL 环境贴图
+      // HDR 仅作 IBL 环境贴图；视觉背景用 backgroundUrl
       hdrUrl: '/hdr/rural_evening_road_1k.hdr',
       format: 'hdr',
       size: 10000,
       blur: 0.3,
       asEnvironmentTexture: true,
       showMesh: true,
+      backgroundUrl: '/sunny.jpg',
       rotationY: 0,
       level: 1,
       hdrSize: 256,
