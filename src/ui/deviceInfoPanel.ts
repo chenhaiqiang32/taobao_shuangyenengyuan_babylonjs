@@ -7,6 +7,7 @@ import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import type { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import type { Camera } from '@babylonjs/core/Cameras/camera'
 import type { Scene } from '@babylonjs/core/scene'
+import { formatDeviceDisplayName } from '../business/deviceMetrics'
 import { postDevicePanelClose } from '../message/postMessage'
 
 export interface DeviceInfoPanelOptions {
@@ -173,7 +174,7 @@ export function createDeviceInfoPanel(
     show(objectName, title, metrics, anchorNode) {
       currentName = objectName
       anchor = anchorNode
-      titleEl.textContent = title || `${objectName}详情`
+      titleEl.textContent = title || formatDeviceDisplayName(objectName)
       renderRows(metrics)
       root.hidden = false
       setLinkVisible(true)

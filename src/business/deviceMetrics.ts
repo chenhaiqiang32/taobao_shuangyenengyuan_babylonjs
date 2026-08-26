@@ -12,6 +12,14 @@ export function normalizeDeviceName(name: string): string {
     .replace(/_+$/g, '')
 }
 
+/** 信息牌标题：BIM_主机电表_2_ → 主机电表_2 */
+export function formatDeviceDisplayName(name: string): string {
+  return String(name || '')
+    .trim()
+    .replace(/^BIM_/i, '')
+    .replace(/_+$/g, '')
+}
+
 export function upsertDeviceMetrics(objects: ModelUpdateObject[]): void {
   for (const obj of objects) {
     if (!obj?.objectName) continue

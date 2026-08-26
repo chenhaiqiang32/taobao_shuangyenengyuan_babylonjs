@@ -7,7 +7,7 @@ import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents'
 import type { Camera } from '@babylonjs/core/Cameras/camera'
 import type { AppOrchestrator } from '../core/app'
 import type { BimDeviceEntry } from '../modules/model'
-import { getDeviceMetrics, normalizeDeviceName } from './deviceMetrics'
+import { getDeviceMetrics, formatDeviceDisplayName } from './deviceMetrics'
 import { DeviceEmissiveHighlight } from './deviceEmissiveHighlight'
 import { createDeviceInfoPanel, type DeviceInfoPanelApi } from '../ui/deviceInfoPanel'
 import { postDeviceClick } from '../message/postMessage'
@@ -70,7 +70,7 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
     refreshEmissive()
 
     const metrics = getDeviceMetrics(entry.objectName) ?? {}
-    const title = `${normalizeDeviceName(entry.objectName)}详情`
+    const title = formatDeviceDisplayName(entry.objectName)
     panel.show(entry.objectName, title, metrics, entry.node)
     postDeviceClick({ objectName: entry.objectName, metrics })
   }
