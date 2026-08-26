@@ -4,12 +4,19 @@ import { AppOrchestrator } from './core/app'
 // import { createParamsPanel } from './ui/paramsPanel'
 import { createBusinessFeatures, type BusinessFeaturesGlobal } from './business/features'
 import { createRoofToggleButton } from './ui/roofToggleButton'
+import { startOnMessage } from './message/onMessage'
+import { postOnLoaded, postOnLoading } from './message/postMessage'
+import { createDeviceInteraction } from './business/deviceInteraction'
+import { createDeviceStatusOverlay } from './business/deviceStatusOverlay'
+import { createPipeFlow } from './business/pipeFlow'
 
 async function bootstrap(): Promise<void> {
   const appRoot = document.querySelector('#app')
   if (!appRoot) {
     throw new Error('#app not found')
   }
+
+  postOnLoading()
 
   const canvas = document.createElement('canvas')
   canvas.tabIndex = 0
@@ -28,6 +35,22 @@ async function bootstrap(): Promise<void> {
 
   // 右上角「隐藏屋顶」按钮
   createRoofToggleButton(business)
+
+  // 设备点击信息牌 + 父页面 MODEL_UPDATE
+  const deviceUi = createDeviceInteraction(app)
+  const statusOverlay = createDeviceStatusOverlay(app)
+  const pipeFlow = createPipeFlow(app)
+  startOnMessage({
+    onModelUpdate(objects) {
+      statusOverlay?.applyFromUpdate(objects)
+      pipeFlow?.applyFromUpdate(objects)
+      for (const obj of objects) {
+        deviceUi?.panel.refreshIfSame(obj.objectName, obj.metrics || {})
+      }
+    },
+  })
+
+  postOnLoaded()
 
   window.addEventListener('keydown', (ev) => {
     if (ev.key.toLowerCase() === 'i' && ev.ctrlKey && ev.shiftKey) {

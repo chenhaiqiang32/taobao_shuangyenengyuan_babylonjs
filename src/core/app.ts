@@ -82,6 +82,11 @@ export class AppOrchestrator {
     return this.modelModule
   }
 
+  /** 运行时上下文（scene / camera / engine） */
+  getContext(): AppContext | null {
+    return this.ctx
+  }
+
   async applySection<K extends keyof SceneAppConfig>(
     section: K,
     patch: SceneAppConfig[K],

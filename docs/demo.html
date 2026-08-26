@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>前端 × 三维 交互演示 — 广州双叶能源站</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b1220;
+        color: #e8f0ff;
+        font: 14px/1.5 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+      .layout {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        height: 100%;
+      }
+      .bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px 20px;
+        padding: 10px 16px;
+        background: #121a2b;
+        border-bottom: 1px solid rgba(0, 220, 255, 0.25);
+      }
+      .bar h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .bar .meta {
+        color: rgba(232, 240, 255, 0.65);
+        font-size: 12px;
+      }
+      .bar button {
+        padding: 6px 12px;
+        border: 1px solid rgba(0, 255, 255, 0.45);
+        border-radius: 6px;
+        background: rgba(0, 40, 50, 0.6);
+        color: #e8f0ff;
+        cursor: pointer;
+      }
+      .bar button:hover {
+        background: rgba(0, 70, 80, 0.8);
+      }
+      #viewer {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #05070a;
+      }
+      #log {
+        position: fixed;
+        left: 12px;
+        bottom: 12px;
+        z-index: 10;
+        max-width: min(420px, 90vw);
+        max-height: 28vh;
+        overflow: auto;
+        padding: 8px 10px;
+        font: 11px/1.4 Consolas, 'Courier New', monospace;
+        color: #b8e8ff;
+        background: rgba(0, 0, 0, 0.72);
+        border: 1px solid rgba(0, 255, 255, 0.3);
+        border-radius: 6px;
+        pointer-events: none;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <div class="bar">
+        <h1>demo.html · iframe 嵌入三维</h1>
+        <span class="meta">每 10 秒推送 model-update.json · MODEL_UPDATE</span>
+        <button type="button" id="btnPush">立即推送一次</button>
+        <span class="meta" id="status">等待三维加载…</span>
+      </div>
+      <!-- 相对路径：开发与 GitHub Pages（base）下均可定位到同目录 index -->
+      <iframe id="viewer" title="三维场景" src="http://localhost:5174/taobao_shuangyenengyuan_babylonjs/" allow="fullscreen"></iframe>
+    </div>
+    <div id="log"></div>
+
+    <script>
+      const iframe = document.getElementById('viewer')
+      const statusEl = document.getElementById('status')
+      const logEl = document.getElementById('log')
+      const INTERVAL_MS = 10000
+      const DATA_URL = './model-update.json'
+
+      /** 缓存 model-update.json 中的 MODEL_UPDATE 载荷 */
+      let cachedPayload = null
+      let pendingPush = false
+
+      function log(msg) {
+        const line = `[${new Date().toLocaleTimeString()}] ${msg}`
+        logEl.textContent = `${line}\n${logEl.textContent}`.slice(0, 4000)
+      }
+
+      async function loadPayload() {
+        const res = await fetch(DATA_URL)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (!data || data.type !== 'MODEL_UPDATE' || !Array.isArray(data.objects)) {
+          throw new Error('model-update.json 格式无效')
+        }
+        cachedPayload = data
+        log(`已加载 model-update.json · ${data.objects.length} 台设备`)
+        return data
+      }
+
+      function buildPayload() {
+        if (!cachedPayload) return null
+        // 深拷贝，避免 postMessage 结构化克隆影响缓存；并刷新采集时间便于观察推送
+        const payload = structuredClone(cachedPayload)
+        const now = new Date().toLocaleString()
+        for (const obj of payload.objects) {
+          if (obj.metrics && typeof obj.metrics === 'object') {
+            obj.metrics.采集时间 = now
+          }
+        }
+        return payload
+      }
+
+      function pushUpdate() {
+        const win = iframe.contentWindow
+        if (!win) {
+          log('iframe 未就绪，跳过推送')
+          return
+        }
+        if (!cachedPayload) {
+          pendingPush = true
+          statusEl.textContent = '正在加载 model-update.json…'
+          return
+        }
+        const payload = buildPayload()
+        win.postMessage(payload, '*')
+        statusEl.textContent = `已推送 ${payload.objects.length} 台设备 · ${new Date().toLocaleTimeString()}`
+        const sample = payload.objects
+          .slice(0, 4)
+          .map((o) => o.objectName)
+          .join(', ')
+        log(`→ MODEL_UPDATE ×${payload.objects.length} (${sample}${payload.objects.length > 4 ? ', …' : ''})`)
+      }
+
+      document.getElementById('btnPush').addEventListener('click', pushUpdate)
+
+      // 接收三维回传（onLoaded / 设备点击等）
+      window.addEventListener('message', (event) => {
+        if (event.source !== iframe.contentWindow) return
+        const data = event.data
+        if (!data || typeof data !== 'object') return
+        if (data.cmd === 'onLoaded') {
+          statusEl.textContent = '三维已加载，开始定时推送'
+          log('← onLoaded')
+          pushUpdate()
+        } else if (data.cmd === 'onLoading') {
+          log('← onLoading')
+        } else if (data.cmd === 'web3dDeviceClick') {
+          log(`← web3dDeviceClick ${JSON.stringify(data.param)}`)
+        } else if (data.cmd === 'web3dDevicePanelClose') {
+          log(`← web3dDevicePanelClose ${JSON.stringify(data.param)}`)
+        }
+      })
+
+      loadPayload()
+        .then(() => {
+          if (pendingPush) {
+            pendingPush = false
+            pushUpdate()
+          }
+        })
+        .catch((err) => {
+          statusEl.textContent = 'model-update.json 加载失败'
+          log(`加载失败: ${err.message || err}`)
+        })
+
+      setInterval(pushUpdate, INTERVAL_MS)
+    </script>
+  </body>
+</html>

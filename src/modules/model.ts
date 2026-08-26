@@ -1,4 +1,5 @@
 import '@babylonjs/loaders/glTF'
+import '@babylonjs/core/Culling/ray'
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
 import { Vector3 } from '@babylonjs/core/Maths/math.vector'
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
@@ -20,6 +21,26 @@ export interface ModelBounds {
   radius: number
 }
 
+/** 「设备_管道」下第一层管道 mesh 索引项 */
+export interface PipeEntry {
+  meshName: string
+  mesh: AbstractMesh
+  /** 关联水泵 objectName（shuibeng，/ 分隔） */
+  pumps: string[]
+  /** 关联阀门 objectName（famen，/ 分隔） */
+  valves: string[]
+}
+
+/** 「设备_指定名称」下 BIM_* 设备索引项 */
+export interface BimDeviceEntry {
+  /** 规范化设备名（去掉尾部 _） */
+  objectName: string
+  /** 设备根节点（TransformNode 或带 mesh 的 Mesh） */
+  node: AbstractMesh | TransformNode
+  /** 用于拾取与高亮的所有网格 */
+  meshes: AbstractMesh[]
+}
+
 export class ModelModule implements SceneModule<ModelConfig> {
   readonly name = 'model'
   private ctx: AppContext | null = null
@@ -31,6 +52,14 @@ export class ModelModule implements SceneModule<ModelConfig> {
   private lastUrl = ''
   private cameraModule: CameraModule | null = null
   private animationGroups: AnimationGroup[] = []
+  /** 加载完成后索引：objectName → 设备 */
+  private bimDeviceIndex = new Map<string, BimDeviceEntry>()
+  /** mesh → 所属设备，加速拾取 */
+  private meshToBimDevice = new Map<AbstractMesh, BimDeviceEntry>()
+  /** 设备根节点 → 所属设备 */
+  private nodeToBimDevice = new Map<Node, BimDeviceEntry>()
+  /** 管道 mesh 名 → 管道 */
+  private pipeIndex = new Map<string, PipeEntry>()
 
   setCameraModule(cameraModule: CameraModule): void {
     this.cameraModule = cameraModule
@@ -73,6 +102,8 @@ export class ModelModule implements SceneModule<ModelConfig> {
       }
       this.syncAnimationsToConfig(config)
       this.bindControlsAndCamera()
+      this.buildBimDeviceIndex()
+      this.buildPipeIndex()
     } else if (config.fixTransparentDepth) {
       // 配置开关从关到开时补一次修复
       this.fixTransparentMaterials()
@@ -215,6 +246,231 @@ export class ModelModule implements SceneModule<ModelConfig> {
     >
 
     return matched
+  }
+
+  /** 「设备_指定名称」组下的 BIM_* 设备根节点 */
+  static readonly DEVICE_GROUP_NAME = '设备_指定名称'
+  /** 「设备_管道」组下的管道 mesh */
+  static readonly PIPE_GROUP_NAME = '设备_管道'
+
+  /** 读取 glTF extras / 节点自定义数据（shuibeng、famen 等） */
+  static readNodeExtras(node: Node): Record<string, unknown> {
+    const meta = (node as { metadata?: Record<string, unknown> }).metadata
+    if (!meta) return {}
+    const gltf = meta.gltf as { extras?: Record<string, unknown> } | undefined
+    if (gltf?.extras && typeof gltf.extras === 'object') {
+      return gltf.extras
+    }
+    return meta
+  }
+
+  /** 解析 shuibeng / famen 等 / 分隔的设备名列表 */
+  static parseDeviceRefList(raw: unknown): string[] {
+    if (typeof raw !== 'string' || !raw.trim()) return []
+    return raw
+      .split('/')
+      .map((s) => ModelModule.normalizeDeviceName(s.trim()))
+      .filter(Boolean)
+  }
+
+  /**
+   * 规范化设备名：去掉尾部下划线，便于 BIM_主机_1 与 BIM_主机_1_ 互配
+   */
+  static normalizeDeviceName(name: string): string {
+    return String(name || '')
+      .trim()
+      .replace(/_+$/g, '')
+  }
+
+  /** 已索引的全部 BIM 设备 */
+  getBimDeviceEntries(): BimDeviceEntry[] {
+    return [...this.bimDeviceIndex.values()]
+  }
+
+  getBimDeviceEntry(objectName: string): BimDeviceEntry | null {
+    return this.bimDeviceIndex.get(ModelModule.normalizeDeviceName(objectName)) ?? null
+  }
+
+  getPipeEntries(): PipeEntry[] {
+    return [...this.pipeIndex.values()]
+  }
+
+  getPipeEntry(meshName: string): PipeEntry | null {
+    return this.pipeIndex.get(meshName) ?? null
+  }
+
+  /** 在场景树中按名称查找节点（含深层子级） */
+  private findNodesByName(partName: string): Node[] {
+    if (!partName || !this.container) return []
+
+    const found: Node[] = []
+    const seen = new Set<Node>()
+    const visit = (node: Node): void => {
+      if (seen.has(node)) return
+      seen.add(node)
+      if (node.name === partName) found.push(node)
+      for (const child of node.getChildren()) visit(child)
+    }
+
+    for (const rn of this.container.rootNodes) visit(rn)
+    if (this.pivot) visit(this.pivot)
+    return found
+  }
+
+  private isMeshNode(node: Node): node is AbstractMesh {
+    const mesh = node as AbstractMesh
+    return typeof mesh.getTotalVertices === 'function' && typeof mesh.isPickable === 'boolean'
+  }
+
+  private collectDeviceMeshes(node: Node): AbstractMesh[] {
+    const meshes: AbstractMesh[] = []
+    const seen = new Set<AbstractMesh>()
+
+    const tryAdd = (m: AbstractMesh): void => {
+      if (seen.has(m)) return
+      seen.add(m)
+      meshes.push(m)
+    }
+
+    if (this.isMeshNode(node)) tryAdd(node)
+    if ('getChildMeshes' in node && typeof node.getChildMeshes === 'function') {
+      for (const child of (node as TransformNode).getChildMeshes(true)) {
+        tryAdd(child)
+      }
+    }
+    return meshes
+  }
+
+  /**
+   * 模型加载后索引「设备_指定名称」组下第一层 BIM_* 设备（不递归）
+   */
+  private buildBimDeviceIndex(): void {
+    this.bimDeviceIndex.clear()
+    this.meshToBimDevice.clear()
+    this.nodeToBimDevice.clear()
+    if (!this.container) return
+
+    const groups = this.findNodesByName(ModelModule.DEVICE_GROUP_NAME)
+    for (const group of groups) {
+      for (const child of group.getChildren()) {
+        const rawName = child.name || ''
+        if (!rawName.startsWith('BIM_')) continue
+
+        const objectName = ModelModule.normalizeDeviceName(rawName)
+        if (this.bimDeviceIndex.has(objectName)) continue
+
+        const meshes = this.collectDeviceMeshes(child)
+        if (!meshes.length) continue
+
+        const entry: BimDeviceEntry = {
+          objectName,
+          node: child as AbstractMesh | TransformNode,
+          meshes,
+        }
+        this.bimDeviceIndex.set(objectName, entry)
+        this.nodeToBimDevice.set(child, entry)
+        for (const mesh of meshes) {
+          mesh.isPickable = true
+          this.meshToBimDevice.set(mesh, entry)
+          this.nodeToBimDevice.set(mesh, entry)
+        }
+      }
+    }
+    console.info(
+      `[model] BIM devices indexed: ${this.bimDeviceIndex.size}` +
+        (this.bimDeviceIndex.size
+          ? ` (e.g. ${[...this.bimDeviceIndex.keys()].slice(0, 4).join(', ')})`
+          : ''),
+    )
+    if (!this.bimDeviceIndex.size) {
+      console.warn(`[model] no BIM devices found under "${ModelModule.DEVICE_GROUP_NAME}"`)
+    }
+  }
+
+  /**
+   * 模型加载后索引「设备_管道」组下第一层 mesh（不递归）
+   * extras：shuibeng、famen（/ 分隔关联设备名）
+   */
+  private buildPipeIndex(): void {
+    this.pipeIndex.clear()
+    if (!this.container) return
+
+    const groups = this.findNodesByName(ModelModule.PIPE_GROUP_NAME)
+    for (const group of groups) {
+      for (const child of group.getChildren()) {
+        if (!this.isMeshNode(child)) continue
+        const mesh = child as AbstractMesh
+        const extras = ModelModule.readNodeExtras(child)
+        const pumps = ModelModule.parseDeviceRefList(extras.shuibeng)
+        const valves = ModelModule.parseDeviceRefList(extras.famen)
+
+        const entry: PipeEntry = {
+          meshName: mesh.name,
+          mesh,
+          pumps,
+          valves,
+        }
+        this.pipeIndex.set(mesh.name, entry)
+        mesh.isPickable = false
+      }
+    }
+
+    console.info(
+      `[model] pipes indexed: ${this.pipeIndex.size}` +
+        (this.pipeIndex.size
+          ? ` (e.g. ${[...this.pipeIndex.keys()].slice(0, 3).join(', ')})`
+          : ''),
+    )
+    if (!this.pipeIndex.size) {
+      console.warn(`[model] no pipes found under "${ModelModule.PIPE_GROUP_NAME}"`)
+    }
+  }
+
+  /** 列出已索引的全部 BIM 设备根节点 */
+  listBimDeviceNodes(): Array<AbstractMesh | TransformNode> {
+    return this.getBimDeviceEntries().map((e) => e.node)
+  }
+
+  /**
+   * 按 objectName 查找设备锚点（用于信息牌锚定）
+   */
+  findDeviceByObjectName(objectName: string): AbstractMesh | TransformNode | null {
+    return this.getBimDeviceEntry(objectName)?.node ?? null
+  }
+
+  /**
+   * 从拾取到的 mesh 解析所属 BIM 设备
+   */
+  resolveDeviceFromPickedMesh(
+    mesh: AbstractMesh | null,
+  ): { objectName: string; node: AbstractMesh | TransformNode; entry: BimDeviceEntry } | null {
+    if (!mesh) return null
+
+    let cur: Node | null = mesh
+    while (cur) {
+      const entry = this.nodeToBimDevice.get(cur)
+      if (entry) {
+        return { objectName: entry.objectName, node: entry.node, entry }
+      }
+      cur = cur.parent
+    }
+    return null
+  }
+
+  /**
+   * 在当前指针位置拾取 BIM 设备（穿透前景遮挡，只命中已索引设备 mesh）
+   */
+  pickDeviceAtPointer(): BimDeviceEntry | null {
+    const scene = this.ctx?.scene
+    if (!scene || !this.bimDeviceIndex.size) return null
+
+    const isBimMesh = (mesh: AbstractMesh): boolean => this.meshToBimDevice.has(mesh)
+    const hits = scene.multiPick(scene.pointerX, scene.pointerY, isBimMesh)
+    if (!hits?.length) return null
+
+    const picked = hits[0]?.pickedMesh
+    if (!picked) return null
+    return this.meshToBimDevice.get(picked) ?? null
   }
 
   /** 查询部件当前是否可见；未找到返回 null */
@@ -500,6 +756,10 @@ export class ModelModule implements SceneModule<ModelConfig> {
     this.container?.removeAllFromScene()
     this.container?.dispose()
     this.container = null
+    this.bimDeviceIndex.clear()
+    this.meshToBimDevice.clear()
+    this.nodeToBimDevice.clear()
+    this.pipeIndex.clear()
     // root 随 container dispose；pivot 需单独释放
     this.pivot?.dispose()
     this.pivot = null

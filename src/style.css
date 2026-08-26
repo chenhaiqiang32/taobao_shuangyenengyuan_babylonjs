@@ -73,3 +73,132 @@ body {
     top: 48px;
   }
 }
+
+/* CSS2D 风格设备信息牌 */
+.device-info-panel {
+  position: fixed;
+  z-index: 40;
+  min-width: 260px;
+  max-width: 360px;
+  padding: 0;
+  pointer-events: auto;
+  color: #fff;
+  font: 13px/1.45 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: rgba(15, 25, 35, 0.92);
+  border: 1px solid rgba(0, 255, 255, 0.55);
+  border-radius: 8px;
+  box-shadow: 0 0 12px rgba(0, 220, 255, 0.25), 0 8px 24px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  transform: translateZ(0);
+  user-select: none;
+}
+
+.device-info-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.22);
+}
+
+.device-info-panel__title {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.device-info-panel__close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.device-info-panel__close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.device-info-panel__body {
+  padding: 8px 12px 12px;
+  max-height: min(52vh, 420px);
+  overflow: auto;
+}
+
+.device-info-panel__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 3px 0;
+}
+
+.device-info-panel__label {
+  color: rgba(255, 255, 255, 0.88);
+  flex: 1;
+  min-width: 0;
+}
+
+.device-info-panel__value {
+  color: #fff;
+  text-align: right;
+  flex: none;
+  max-width: 55%;
+  word-break: break-all;
+}
+
+.device-info-panel__empty {
+  color: rgba(255, 255, 255, 0.55);
+  padding: 8px 0;
+}
+
+/* 底部指向箭头 */
+.device-info-panel__arrow {
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%) rotate(45deg);
+  background: rgba(15, 25, 35, 0.92);
+  border-right: 1px solid rgba(0, 255, 255, 0.55);
+  border-bottom: 1px solid rgba(0, 255, 255, 0.55);
+  box-shadow: 2px 2px 6px rgba(0, 220, 255, 0.15);
+  pointer-events: none;
+}
+
+/* 牌子 → 模型的引导连线 */
+.device-info-panel__link-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.device-info-panel__link-layer[hidden] {
+  display: none !important;
+}
+
+.device-info-panel__link-line {
+  stroke: rgba(0, 229, 255, 0.85);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.device-info-panel__link-dot {
+  fill: rgba(0, 229, 255, 0.95);
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 1;
+}
