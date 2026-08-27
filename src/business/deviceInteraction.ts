@@ -1,6 +1,6 @@
 /**
  * 设备拾取 + 信息牌：点击「设备_指定名称」下 BIM_* 设备弹出指标牌
- * 悬停 / 选中使用 mesh 自发光叠加（非轮廓光）
+ * 悬停 / 选中：按包围盒叠加自发光罩（不改模型材质）
  */
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents'
@@ -12,13 +12,10 @@ import { DeviceEmissiveHighlight } from './deviceEmissiveHighlight'
 import { createDeviceInfoPanel, type DeviceInfoPanelApi } from '../ui/deviceInfoPanel'
 import { postDeviceClick } from '../message/postMessage'
 
-/** 悬停：浅青自发光 */
-const HOVER_EMISSIVE = Color3.FromHexString('#66F0FF')
-const HOVER_INTENSITY = 0.42
-
-/** 选中（信息牌打开）：琥珀自发光 */
-const SELECTED_EMISSIVE = Color3.FromHexString('#FFB020')
-const SELECTED_INTENSITY = 0.62
+/** 悬停：淡绿色底部发光 */
+const HOVER_COLOR = Color3.FromHexString('#7DFF9A')
+/** 选中：稍深绿色底部发光 */
+const SELECTED_COLOR = Color3.FromHexString('#22C55E')
 
 export interface DeviceInteractionApi {
   panel: DeviceInfoPanelApi
@@ -35,25 +32,25 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
   const scene = ctx.scene
   const canvas = ctx.canvas
   const model = () => app.getModelModule()
-  const emissiveFx = new DeviceEmissiveHighlight()
+  const boundsFx = new DeviceEmissiveHighlight(scene)
 
   let pinnedObjectName: string | null = null
 
-  const refreshEmissive = (): void => {
+  const refreshHighlight = (): void => {
     if (pinnedObjectName) {
       const pinned = model().getBimDeviceEntry(pinnedObjectName)
-      if (pinned) emissiveFx.applySelected(pinned.meshes, SELECTED_EMISSIVE, SELECTED_INTENSITY)
-      else emissiveFx.clearSelected()
+      if (pinned) boundsFx.applySelected(pinned.meshes, SELECTED_COLOR)
+      else boundsFx.clearSelected()
     } else {
-      emissiveFx.clearSelected()
+      boundsFx.clearSelected()
     }
 
     const hover = model().pickDeviceAtPointer()
     if (hover && hover.objectName !== pinnedObjectName) {
-      emissiveFx.applyHover(hover.meshes, HOVER_EMISSIVE, HOVER_INTENSITY)
+      boundsFx.applyHover(hover.meshes, HOVER_COLOR)
       canvas.style.cursor = 'pointer'
     } else {
-      emissiveFx.clearHover()
+      boundsFx.clearHover()
       canvas.style.cursor = hover || pinnedObjectName ? 'pointer' : 'default'
     }
   }
@@ -61,13 +58,13 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
   const panel = createDeviceInfoPanel(scene, ctx.camera as Camera, {
     onClose: () => {
       pinnedObjectName = null
-      refreshEmissive()
+      refreshHighlight()
     },
   })
 
   const openForDevice = (entry: BimDeviceEntry): void => {
     pinnedObjectName = entry.objectName
-    refreshEmissive()
+    refreshHighlight()
 
     const metrics = getDeviceMetrics(entry.objectName) ?? {}
     const title = formatDeviceDisplayName(entry.objectName)
@@ -77,7 +74,7 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
 
   const observer = scene.onPointerObservable.add((pointerInfo) => {
     if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
-      refreshEmissive()
+      refreshHighlight()
       return
     }
 
@@ -90,7 +87,7 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
     if (panel.isOpen() && panel.getObjectName() === entry.objectName) {
       pinnedObjectName = null
       panel.hide()
-      refreshEmissive()
+      refreshHighlight()
       return
     }
 
@@ -105,7 +102,7 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
     dispose() {
       scene.onPointerObservable.remove(observer)
       pinnedObjectName = null
-      emissiveFx.dispose()
+      boundsFx.dispose()
       panel.dispose()
     },
   }

@@ -82,6 +82,11 @@ export class AppOrchestrator {
     return this.modelModule
   }
 
+  /** 供业务层调用的相机模块 */
+  getCameraModule(): CameraModule {
+    return this.cameraModule
+  }
+
   /** 运行时上下文（scene / camera / engine） */
   getContext(): AppContext | null {
     return this.ctx

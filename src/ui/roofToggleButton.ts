@@ -1,32 +1,63 @@
 import type { BusinessFeatures } from '../business/features'
 
 /**
- * 右上角业务按钮：隐藏/显示屋顶
+ * 右上角业务工具条：屋顶显隐 + 视角切换（紧凑横排）
  */
-export function createRoofToggleButton(business: BusinessFeatures): HTMLButtonElement {
-  const btn = document.createElement('button')
-  btn.type = 'button'
-  btn.className = 'biz-btn biz-btn-roof'
-  btn.textContent = '隐藏屋顶'
+export function createRoofToggleButton(business: BusinessFeatures): HTMLDivElement {
+  const bar = document.createElement('div')
+  bar.className = 'biz-toolbar'
 
-  const syncLabel = (): void => {
+  const roofBtn = document.createElement('button')
+  roofBtn.type = 'button'
+  roofBtn.className = 'biz-btn'
+  roofBtn.textContent = '隐藏屋顶'
+
+  const syncRoofLabel = (): void => {
     const visible = business.isRoofVisible()
     // null 视为当前可见（尚未隐藏）
     const isVisible = visible !== false
-    btn.textContent = isVisible ? '隐藏屋顶' : '显示屋顶'
-    btn.dataset.visible = isVisible ? '1' : '0'
+    roofBtn.textContent = isVisible ? '隐藏屋顶' : '显示屋顶'
+    roofBtn.dataset.visible = isVisible ? '1' : '0'
   }
 
-  btn.addEventListener('click', () => {
+  roofBtn.addEventListener('click', () => {
     const next = business.toggleRoofVisible()
     if (next === null) {
-      btn.textContent = '未找到屋顶'
+      roofBtn.textContent = '未找到屋顶'
       return
     }
-    syncLabel()
+    syncRoofLabel()
   })
 
-  syncLabel()
-  document.body.appendChild(btn)
-  return btn
+  const energyBtn = document.createElement('button')
+  energyBtn.type = 'button'
+  energyBtn.className = 'biz-btn'
+  energyBtn.textContent = '切换到能源站视角'
+  energyBtn.title = '切换到能源站视角'
+  energyBtn.addEventListener('click', () => {
+    business.setCameraView('energyStation')
+  })
+
+  const terminalBtn = document.createElement('button')
+  terminalBtn.type = 'button'
+  terminalBtn.className = 'biz-btn'
+  terminalBtn.textContent = '切换到末端视角'
+  terminalBtn.title = '切换到末端视角'
+  terminalBtn.addEventListener('click', () => {
+    business.setCameraView('terminal')
+  })
+
+  const printBtn = document.createElement('button')
+  printBtn.type = 'button'
+  printBtn.className = 'biz-btn'
+  printBtn.textContent = '打印位姿'
+  printBtn.title = '打印当前相机位置与控制器位置到控制台'
+  printBtn.addEventListener('click', () => {
+    business.printCameraPose()
+  })
+
+  syncRoofLabel()
+  bar.append(roofBtn, energyBtn, terminalBtn)
+  document.body.appendChild(bar)
+  return bar
 }

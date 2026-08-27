@@ -33,7 +33,7 @@ async function bootstrap(): Promise<void> {
   g.__app = app
   g.__business = business
 
-  // 右上角「隐藏屋顶」按钮
+  // 右上角业务工具条：屋顶显隐 + 视角切换
   createRoofToggleButton(business)
 
   // 设备点击信息牌 + 父页面 MODEL_UPDATE
