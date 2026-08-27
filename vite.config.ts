@@ -1,9 +1,8 @@
 import { defineConfig } from 'vite'
 
-// GitHub Pages 项目站：https://<user>.github.io/<repo>/
-// 仓库名：taobao_shuangyenengyuan_babylonjs
+// 使用相对路径，docs 部署到任意目录/域名根路径均可打开
 export default defineConfig({
-  base: '/taobao_shuangyenengyuan_babylonjs/',
+  base: './',
   build: {
     outDir: 'docs',
     emptyOutDir: true,

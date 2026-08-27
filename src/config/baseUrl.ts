@@ -1,12 +1,12 @@
-/** Vite / GitHub Pages base，如 `/taobao_shuangyenengyuan_babylonjs/` */
+/** Vite base（build 时为 `./`），用于拼接静态资源路径 */
 export function getBaseUrl(): string {
-  return import.meta.env.BASE_URL || '/'
+  return import.meta.env.BASE_URL || './'
 }
 
 /**
  * 将站点相对路径拼到 base 下。
  * - 已是 http(s) 绝对地址则原样返回
- * - `/models/a.glb` → `/repo/models/a.glb`
+ * - `/models/a.glb` → `./models/a.glb`
  */
 export function withBase(path: string): string {
   if (!path) return path
