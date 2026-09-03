@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>系统工况 · 运行策略表</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #000;
+        color: #fff;
+        font: 13px/1.4 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif;
+      }
+      .wrap {
+        padding: 24px 16px;
+        overflow-x: auto;
+      }
+      table {
+        width: max-content;
+        min-width: 100%;
+        border-collapse: collapse;
+        border: 1px solid #fff;
+        table-layout: fixed;
+      }
+      th,
+      td {
+        border: 1px solid #fff;
+        padding: 8px 6px;
+        text-align: center;
+        vertical-align: middle;
+        white-space: nowrap;
+      }
+      thead th {
+        font-weight: 600;
+      }
+      th.mode {
+        width: 7.5em;
+        min-width: 7.5em;
+      }
+      th.equip {
+        width: 3.6em;
+        min-width: 3.2em;
+      }
+      tbody th {
+        font-weight: 500;
+        text-align: center;
+      }
+      tr.highlight td,
+      tr.highlight th {
+        outline: 2px solid #e53935;
+        outline-offset: -2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="mode" rowspan="2">系统工况</th>
+            <th colspan="19">运行策略</th>
+          </tr>
+          <tr>
+            <th class="equip">离心主机</th>
+            <th class="equip">螺杆主机</th>
+            <th class="equip">放冷泵</th>
+            <th class="equip">V1</th>
+            <th class="equip">V2</th>
+            <th class="equip">V3-1</th>
+            <th class="equip">V3-2</th>
+            <th class="equip">V4开关</th>
+            <th class="equip">V5调节</th>
+            <th class="equip">V6-1</th>
+            <th class="equip">V6-2</th>
+            <th class="equip">V7调节</th>
+            <th class="equip">V8调节</th>
+            <th class="equip">V9调节</th>
+            <th class="equip">V10/11</th>
+            <th class="equip">V12/13</th>
+            <th class="equip">V14/15</th>
+            <th class="equip">V16/17</th>
+            <th class="equip">V18</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="highlight">
+            <th>主机单独供冷</th>
+            <td>变频</td>
+            <td>变频</td>
+            <td>关</td>
+            <td>开</td>
+            <td>开</td>
+            <td>关</td>
+            <td>关</td>
+            <td>关</td>
+            <td>关</td>
+            <td>关</td>
+            <td>关</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>关</td>
+            <td>关</td>
+            <td>开</td>
+            <td>开</td>
+            <td>关</td>
+          </tr>
+          <tr>
+            <th>蓄水罐供冷</th>
+            <td>关</td>
+            <td>关</td>
+            <td>变频</td>
+            <td>关</td>
+            <td>关</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>关</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>关</td>
+            <td>关</td>
+            <td>开</td>
+            <td>开</td>
+            <td>关</td>
+          </tr>
+          <tr>
+            <th>主机蓄冷</th>
+            <td>变频</td>
+            <td>变频</td>
+            <td>关</td>
+            <td>开</td>
+            <td>开</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>开</td>
+            <td>关</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>关</td>
+            <td>关</td>
+            <td>关</td>
+            <td>开</td>
+            <td>开</td>
+            <td>开</td>
+            <td>开</td>
+            <td>关</td>
+          </tr>
+          <tr>
+            <th>联合供冷</th>
+            <td>变频</td>
+            <td>变频</td>
+            <td>变频</td>
+            <td>开</td>
+            <td>开</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>关</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>关</td>
+            <td>关</td>
+            <td>开</td>
+            <td>开</td>
+            <td>关</td>
+          </tr>
+          <tr>
+            <th>边蓄边供</th>
+            <td>变频</td>
+            <td>变频</td>
+            <td>关</td>
+            <td>开</td>
+            <td>开</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>开</td>
+            <td>关</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>调节</td>
+            <td>关</td>
+            <td>关</td>
+            <td>开</td>
+            <td>开</td>
+            <td>关</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </body>
+</html>
