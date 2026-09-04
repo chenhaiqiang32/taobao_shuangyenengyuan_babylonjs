@@ -39,7 +39,7 @@ async function bootstrap(): Promise<void> {
   // 设备点击信息牌 + 父页面 MODEL_UPDATE
   const deviceUi = createDeviceInteraction(app)
   const statusOverlay = createDeviceStatusOverlay(app)
-  const pipeFlow = createPipeFlow(app)
+  const pipeFlow = await createPipeFlow(app)
   startOnMessage({
     onModelUpdate(objects) {
       statusOverlay?.applyFromUpdate(objects)

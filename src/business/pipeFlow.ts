@@ -1,23 +1,139 @@
 /**
- * 管道流动：根据 MODEL_UPDATE 中水泵/阀门状态驱动材质纹理偏移
+ * 工况管线水流：根据 MODEL_UPDATE 判定工况线条，沿路径生成 GreasedLine 着色器流动效果
  */
-import { Texture } from '@babylonjs/core/Materials/Textures/texture'
-import { Material } from '@babylonjs/core/Materials/material'
-import { MultiMaterial } from '@babylonjs/core/Materials/multiMaterial'
-import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial'
-import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
+import '@babylonjs/loaders/glTF'
+import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
+import { Color3 } from '@babylonjs/core/Maths/math.color'
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer'
+import { CreateGreasedLine } from '@babylonjs/core/Meshes/Builders/greasedLineBuilder'
+import {
+  GreasedLineMeshMaterialType,
+  type IGreasedLineMaterial,
+} from '@babylonjs/core/Materials/GreasedLine/greasedLineMaterialInterfaces'
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
+import type { AssetContainer } from '@babylonjs/core/assetContainer'
+import type { GreasedLineBaseMesh } from '@babylonjs/core/Meshes/GreasedLine/greasedLineBaseMesh'
+import type { TransformNode } from '@babylonjs/core/Meshes/transformNode'
+import { withBase } from '../config/baseUrl'
 import type { AppOrchestrator } from '../core/app'
 import { getDeviceMetrics } from './deviceMetrics'
-import type { PipeEntry } from '../modules/model'
 import type { ModelUpdateObject } from '../message/types'
 
-/** 纹理 V 方向滚动速度（单位/秒） */
-const FLOW_SCROLL_SPEED = 0.4
+const LINES_MODEL_URL = '/models/广州双叶厂房_工况Lines.glb'
+
+/** 虚线滚动速度（dashOffset / 秒） */
+const FLOW_DASH_SPEED = 0.35
+const FLOW_LINE_WIDTH = 0.35
+const FLOW_COLOR = new Color3(0.15, 0.75, 1)
+
+const PUMP_1 = 'BIM_放冷泵_1'
+const PUMP_2 = 'BIM_放冷泵_2'
+const SV_1 = 'BIM_开关阀_1'
+const SV_2 = 'BIM_开关阀_2'
+const SV_5 = 'BIM_开关阀_5'
+const CV_3 = 'BIM_调节阀_3'
+const CV_4 = 'BIM_调节阀_4'
+const CV_6 = 'BIM_调节阀_6'
+const CV_7 = 'BIM_调节阀_7'
+const CV_8 = 'BIM_调节阀_8'
+const CV_9 = 'BIM_调节阀_9'
+const CV_10 = 'BIM_调节阀_10'
+const CV_11 = 'BIM_调节阀_11'
+
+type DeviceKind = 'pump' | 'switchValve' | 'controlValve'
+
+type RuleCheck =
+  | { type: 'allClosed'; devices: string[]; kind: DeviceKind }
+  | { type: 'atLeastOneOpen'; devices: string[]; kind: DeviceKind }
+  | { type: 'open'; device: string; kind: DeviceKind }
+  | { type: 'closed'; device: string; kind: DeviceKind }
+
+interface WorkingConditionRule {
+  /** 与 GLB 中线条节点名一致 */
+  lineName: string
+  checks: RuleCheck[]
+}
+
+/** 与 public/1.xlsx 工况判定表一致 */
+const WORKING_CONDITION_RULES: WorkingConditionRule[] = [
+  {
+    lineName: 'ZJDDGL主机单独供冷',
+    checks: [
+      { type: 'allClosed', devices: [PUMP_1, PUMP_2], kind: 'pump' },
+      { type: 'atLeastOneOpen', devices: [SV_1, SV_2], kind: 'switchValve' },
+      { type: 'allClosed', devices: [CV_3, CV_4], kind: 'controlValve' },
+      { type: 'closed', device: SV_5, kind: 'switchValve' },
+      { type: 'closed', device: CV_6, kind: 'controlValve' },
+      { type: 'closed', device: CV_7, kind: 'controlValve' },
+      { type: 'closed', device: CV_8, kind: 'controlValve' },
+      { type: 'open', device: CV_9, kind: 'controlValve' },
+      { type: 'open', device: CV_10, kind: 'controlValve' },
+      { type: 'open', device: CV_11, kind: 'controlValve' },
+    ],
+  },
+  {
+    lineName: 'XSGGL蓄水罐供冷',
+    checks: [
+      { type: 'atLeastOneOpen', devices: [PUMP_1, PUMP_2], kind: 'pump' },
+      { type: 'closed', device: SV_1, kind: 'switchValve' },
+      { type: 'closed', device: SV_2, kind: 'switchValve' },
+      { type: 'atLeastOneOpen', devices: [CV_3, CV_4], kind: 'controlValve' },
+      { type: 'closed', device: SV_5, kind: 'switchValve' },
+      { type: 'open', device: CV_6, kind: 'controlValve' },
+      { type: 'atLeastOneOpen', devices: [CV_7, CV_8], kind: 'controlValve' },
+      { type: 'open', device: CV_9, kind: 'controlValve' },
+      { type: 'open', device: CV_10, kind: 'controlValve' },
+      { type: 'open', device: CV_11, kind: 'controlValve' },
+    ],
+  },
+  {
+    lineName: 'ZJXL主机蓄冷',
+    checks: [
+      { type: 'allClosed', devices: [PUMP_1, PUMP_2], kind: 'pump' },
+      { type: 'atLeastOneOpen', devices: [SV_1, SV_2], kind: 'switchValve' },
+      { type: 'atLeastOneOpen', devices: [CV_3, CV_4], kind: 'controlValve' },
+      { type: 'open', device: SV_5, kind: 'switchValve' },
+      { type: 'closed', device: CV_6, kind: 'controlValve' },
+      { type: 'atLeastOneOpen', devices: [CV_7, CV_8], kind: 'controlValve' },
+      { type: 'closed', device: CV_9, kind: 'controlValve' },
+      { type: 'closed', device: CV_10, kind: 'controlValve' },
+      { type: 'closed', device: CV_11, kind: 'controlValve' },
+    ],
+  },
+  {
+    lineName: 'LHGL联合供冷',
+    checks: [
+      { type: 'atLeastOneOpen', devices: [PUMP_1, PUMP_2], kind: 'pump' },
+      { type: 'atLeastOneOpen', devices: [SV_1, SV_2], kind: 'switchValve' },
+      { type: 'atLeastOneOpen', devices: [CV_3, CV_4], kind: 'controlValve' },
+      { type: 'closed', device: SV_5, kind: 'switchValve' },
+      { type: 'open', device: CV_6, kind: 'controlValve' },
+      { type: 'atLeastOneOpen', devices: [CV_7, CV_8], kind: 'controlValve' },
+      { type: 'open', device: CV_9, kind: 'controlValve' },
+      { type: 'open', device: CV_10, kind: 'controlValve' },
+      { type: 'open', device: CV_11, kind: 'controlValve' },
+    ],
+  },
+  {
+    lineName: 'BGBX边供边蓄',
+    checks: [
+      { type: 'allClosed', devices: [PUMP_1, PUMP_2], kind: 'pump' },
+      { type: 'atLeastOneOpen', devices: [SV_1, SV_2], kind: 'switchValve' },
+      { type: 'atLeastOneOpen', devices: [CV_3, CV_4], kind: 'controlValve' },
+      { type: 'open', device: SV_5, kind: 'switchValve' },
+      { type: 'closed', device: CV_6, kind: 'controlValve' },
+      { type: 'atLeastOneOpen', devices: [CV_7, CV_8], kind: 'controlValve' },
+      { type: 'open', device: CV_9, kind: 'controlValve' },
+      { type: 'open', device: CV_10, kind: 'controlValve' },
+      { type: 'open', device: CV_11, kind: 'controlValve' },
+    ],
+  },
+]
 
 export interface PipeFlowApi {
   applyFromUpdate: (objects: ModelUpdateObject[]) => void
   refreshAll: () => void
+  getActiveLineName: () => string | null
   dispose: () => void
 }
 
@@ -29,181 +145,196 @@ function readMetric(metrics: Record<string, string | number>, name: string): num
   return null
 }
 
-/** 水泵：运行信号 === 1 */
-export function isPumpRunning(objectName: string): boolean {
+function isDeviceOpen(objectName: string, kind: DeviceKind): boolean {
   const metrics = getDeviceMetrics(objectName)
   if (!metrics) return false
-  return readMetric(metrics, '运行信号') === 1
-}
-
-/** 阀门：开到位 / 开度 / 运行状态 任一满足即视为开启 */
-export function isValveOpen(objectName: string): boolean {
-  const metrics = getDeviceMetrics(objectName)
-  if (!metrics) return false
-  if (readMetric(metrics, '阀门开到位信号') === 1) return true
+  if (kind === 'pump') return readMetric(metrics, '运行信号') === 1
+  if (kind === 'switchValve') return readMetric(metrics, '阀门开到位信号') === 1
   const feedback = readMetric(metrics, '阀门开度反馈')
-  if (feedback !== null && feedback > 0) return true
-  const opening = readMetric(metrics, '阀门开度')
-  if (opening !== null && opening > 0) return true
-  return readMetric(metrics, '运行状态') === 1
+  return feedback !== null && feedback > 0
 }
 
-/** shuibeng 中任一水泵运行；famen 中全部阀门开启 */
-export function shouldPipeFlow(entry: PipeEntry): boolean {
-  const pumpActive =
-    entry.pumps.length > 0 && entry.pumps.some((name) => isPumpRunning(name))
-  const valvesOpen =
-    entry.valves.length === 0 || entry.valves.every((name) => isValveOpen(name))
-  return pumpActive && valvesOpen
-}
-
-interface ScrollTexture {
-  texture: Texture
-  baseU: number
-  baseV: number
-}
-
-interface PipeFlowState {
-  entry: PipeEntry
-  scrollTextures: ScrollTexture[]
-  flowing: boolean
-  scrollOffset: number
-}
-
-function cloneMaterialTextures(mat: Material | null): void {
-  const walk = (material: Material | null): void => {
-    if (!material) return
-    if (material instanceof MultiMaterial) {
-      for (const sub of material.subMaterials) walk(sub)
-      return
-    }
-    if (material instanceof PBRMaterial) {
-      if (material.albedoTexture instanceof Texture) {
-        material.albedoTexture = material.albedoTexture.clone()
-      }
-      if (material.emissiveTexture instanceof Texture) {
-        material.emissiveTexture = material.emissiveTexture.clone()
-      }
-      return
-    }
-    if (material instanceof StandardMaterial) {
-      if (material.diffuseTexture instanceof Texture) {
-        material.diffuseTexture = material.diffuseTexture.clone()
-      }
-      if (material.emissiveTexture instanceof Texture) {
-        material.emissiveTexture = material.emissiveTexture.clone()
-      }
-    }
+function passesCheck(check: RuleCheck): boolean {
+  if (check.type === 'open') return isDeviceOpen(check.device, check.kind)
+  if (check.type === 'closed') return !isDeviceOpen(check.device, check.kind)
+  if (check.type === 'allClosed') {
+    return check.devices.every((name) => !isDeviceOpen(name, check.kind))
   }
-  walk(mat)
+  return check.devices.some((name) => isDeviceOpen(name, check.kind))
 }
 
-function clonePipeMaterial(mesh: AbstractMesh): Material | null {
-  const current = mesh.material
-  if (!current) return null
-  const cloned = current.clone(`${current.name || 'pipeMat'}_${mesh.name}`)
-  cloneMaterialTextures(cloned)
-  mesh.material = cloned
-  return cloned
-}
-
-function collectScrollTextures(mat: Material | null): ScrollTexture[] {
-  const result: ScrollTexture[] = []
-  const seen = new Set<Texture>()
-
-  const addTexture = (tex: unknown): void => {
-    if (!(tex instanceof Texture) || seen.has(tex)) return
-    seen.add(tex)
-    result.push({ texture: tex, baseU: tex.uOffset, baseV: tex.vOffset })
+/** 按表匹配当前工况线条名；无匹配返回 null */
+export function resolveWorkingConditionLineName(): string | null {
+  for (const rule of WORKING_CONDITION_RULES) {
+    if (rule.checks.every(passesCheck)) return rule.lineName
   }
-
-  const walk = (material: Material | null): void => {
-    if (!material) return
-    if (material instanceof MultiMaterial) {
-      for (const sub of material.subMaterials) walk(sub)
-      return
-    }
-    if (material instanceof PBRMaterial) {
-      addTexture(material.albedoTexture)
-      addTexture(material.emissiveTexture)
-      return
-    }
-    if (material instanceof StandardMaterial) {
-      addTexture(material.diffuseTexture)
-      addTexture(material.emissiveTexture)
-    }
-  }
-
-  walk(mat)
-  return result
+  return null
 }
 
-function resetScroll(state: PipeFlowState): void {
-  state.scrollOffset = 0
-  for (const item of state.scrollTextures) {
-    item.texture.uOffset = item.baseU
-    item.texture.vOffset = item.baseV
+/** 从 LINES 网格提取线段路径（每条线段 2 点） */
+function extractLinePaths(mesh: AbstractMesh): number[][] {
+  const positions = mesh.getVerticesData(VertexBuffer.PositionKind)
+  const indices = mesh.getIndices()
+  if (!positions || !indices?.length) return []
+
+  const paths: number[][] = []
+  for (let i = 0; i + 1 < indices.length; i += 2) {
+    const a = indices[i]!
+    const b = indices[i + 1]!
+    paths.push([
+      positions[a * 3]!,
+      positions[a * 3 + 1]!,
+      positions[a * 3 + 2]!,
+      positions[b * 3]!,
+      positions[b * 3 + 1]!,
+      positions[b * 3 + 2]!,
+    ])
   }
+  return paths
 }
 
-function applyScroll(state: PipeFlowState): void {
-  const total = state.scrollOffset % 1
-  for (const item of state.scrollTextures) {
-    item.texture.uOffset = item.baseU
-    item.texture.vOffset = item.baseV + total
-  }
+function asFlowMaterial(mesh: GreasedLineBaseMesh): IGreasedLineMaterial | null {
+  const mat = mesh.material as unknown as IGreasedLineMaterial | null
+  return mat && typeof (mat as { dashOffset?: unknown }).dashOffset === 'number' ? mat : null
 }
 
-export function createPipeFlow(app: AppOrchestrator): PipeFlowApi | null {
+interface FlowLineEntry {
+  lineName: string
+  mesh: GreasedLineBaseMesh
+  material: IGreasedLineMaterial
+}
+
+export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi | null> {
   const ctx = app.getContext()
   if (!ctx?.scene) return null
 
   const scene = ctx.scene
-  const model = () => app.getModelModule()
-  const states: PipeFlowState[] = []
+  const model = app.getModelModule()
+  const parent = model.getModelPivot()
+  const url = withBase(LINES_MODEL_URL)
 
-  for (const entry of model().getPipeEntries()) {
-    clonePipeMaterial(entry.mesh)
-    const scrollTextures = collectScrollTextures(entry.mesh.material)
-    states.push({
-      entry,
-      scrollTextures,
-      flowing: false,
-      scrollOffset: 0,
-    })
+  let container: AssetContainer | null = null
+  try {
+    container = await LoadAssetContainerAsync(url, scene)
+    container.addAllToScene()
+  } catch (err) {
+    console.error('[pipeFlow] failed to load lines model', url, err)
+    return null
   }
 
-  if (!states.length) {
-    console.warn('[pipeFlow] no pipes indexed')
+  const root = (container.rootNodes[0] as TransformNode | undefined) ?? null
+  if (root && parent) {
+    root.parent = parent
+  }
+
+  const entries: FlowLineEntry[] = []
+  const expectedNames = WORKING_CONDITION_RULES.map((r) => r.lineName)
+
+  const findLineMesh = (lineName: string): AbstractMesh | null => {
+    for (const mesh of container!.meshes) {
+      if (mesh.name === lineName) return mesh
+    }
+    for (const node of container!.rootNodes) {
+      const stack = [node]
+      while (stack.length) {
+        const cur = stack.pop()!
+        if (cur.name === lineName) {
+          if ('getTotalVertices' in cur) {
+            const m = cur as AbstractMesh
+            if (typeof m.getTotalVertices === 'function' && m.getTotalVertices() > 0) return m
+          }
+          if ('getChildMeshes' in cur && typeof (cur as TransformNode).getChildMeshes === 'function') {
+            const children = (cur as TransformNode).getChildMeshes(false)
+            const withVerts = children.find((c) => c.getTotalVertices() > 0)
+            if (withVerts) return withVerts
+          }
+        }
+        for (const child of cur.getChildren()) stack.push(child)
+      }
+    }
+    return null
+  }
+
+  for (const lineName of expectedNames) {
+    const mesh = findLineMesh(lineName)
+    if (!mesh) {
+      console.warn(`[pipeFlow] line node "${lineName}" not found`)
+      continue
+    }
+    mesh.computeWorldMatrix(true)
+    const paths = extractLinePaths(mesh)
+    mesh.setEnabled(false)
+    mesh.isVisible = false
+    if (!paths.length) {
+      console.warn(`[pipeFlow] line "${lineName}" has no segments`)
+      continue
+    }
+
+    const flowMesh = CreateGreasedLine(
+      `flow_${lineName}`,
+      { points: paths },
+      {
+        width: FLOW_LINE_WIDTH,
+        color: FLOW_COLOR,
+        useDash: true,
+        dashCount: 48,
+        dashRatio: 0.45,
+        dashOffset: 0,
+        materialType: GreasedLineMeshMaterialType.MATERIAL_TYPE_SIMPLE,
+      },
+      scene,
+    ) as GreasedLineBaseMesh
+
+    // 与源线条同级，顶点局部坐标一致，并随厂房 pivot 一起变换
+    flowMesh.parent = mesh.parent
+    flowMesh.isPickable = false
+    flowMesh.setEnabled(false)
+
+    const material = asFlowMaterial(flowMesh)
+    if (!material) {
+      console.warn(`[pipeFlow] line "${lineName}" missing greased material`)
+      flowMesh.dispose()
+      continue
+    }
+
+    entries.push({ lineName, mesh: flowMesh, material })
+  }
+
+  if (!entries.length) {
+    console.warn('[pipeFlow] no working-condition lines found in', url)
   } else {
-    const withRefs = states.filter((s) => s.entry.pumps.length || s.entry.valves.length).length
-    const withTex = states.filter((s) => s.scrollTextures.length).length
     console.info(
-      `[pipeFlow] ready pipes=${states.length}, withRefs=${withRefs}, withScrollTex=${withTex}`,
+      `[pipeFlow] lines ready: ${entries.map((e) => e.lineName).join(', ')}`,
     )
   }
 
-  const refreshAll = (): void => {
-    let flowingCount = 0
-    for (const state of states) {
-      const shouldFlow = shouldPipeFlow(state.entry)
-      if (shouldFlow !== state.flowing) {
-        state.flowing = shouldFlow
-        if (!shouldFlow) resetScroll(state)
-      }
-      if (shouldFlow) flowingCount++
+  let activeName: string | null = null
+  let dashOffset = 0
+
+  const setActive = (lineName: string | null): void => {
+    if (lineName === activeName) return
+    activeName = lineName
+    for (const entry of entries) {
+      entry.mesh.setEnabled(entry.lineName === lineName)
     }
-    if (flowingCount > 0) {
-      console.info(`[pipeFlow] flowing pipes=${flowingCount}/${states.length}`)
+    if (lineName) {
+      console.info(`[pipeFlow] active line=${lineName}`)
+    } else {
+      console.info('[pipeFlow] no matching working condition')
     }
   }
 
+  const refreshAll = (): void => {
+    setActive(resolveWorkingConditionLineName())
+  }
+
   const renderObserver = scene.onBeforeRenderObservable.add(() => {
+    if (!activeName) return
     const dt = scene.getEngine().getDeltaTime() * 0.001
-    for (const state of states) {
-      if (!state.flowing || !state.scrollTextures.length) continue
-      state.scrollOffset += FLOW_SCROLL_SPEED * dt
-      applyScroll(state)
+    dashOffset = (dashOffset + FLOW_DASH_SPEED * dt) % 1
+    for (const entry of entries) {
+      if (entry.lineName !== activeName) continue
+      entry.material.dashOffset = dashOffset
     }
   })
 
@@ -214,12 +345,17 @@ export function createPipeFlow(app: AppOrchestrator): PipeFlowApi | null {
       refreshAll()
     },
     refreshAll,
+    getActiveLineName: () => activeName,
     dispose() {
       scene.onBeforeRenderObservable.remove(renderObserver)
-      for (const state of states) {
-        if (state.flowing) resetScroll(state)
+      for (const entry of entries) {
+        entry.mesh.dispose()
       }
-      states.length = 0
+      entries.length = 0
+      container?.removeAllFromScene()
+      container?.dispose()
+      container = null
+      activeName = null
     },
   }
 }

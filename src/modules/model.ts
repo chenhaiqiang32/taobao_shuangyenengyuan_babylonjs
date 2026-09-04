@@ -21,16 +21,6 @@ export interface ModelBounds {
   radius: number
 }
 
-/** 「设备_管道」下第一层管道 mesh 索引项 */
-export interface PipeEntry {
-  meshName: string
-  mesh: AbstractMesh
-  /** 关联水泵 objectName（shuibeng，/ 分隔） */
-  pumps: string[]
-  /** 关联阀门 objectName（famen，/ 分隔） */
-  valves: string[]
-}
-
 /** 「设备_指定名称」下 BIM_* 设备索引项 */
 export interface BimDeviceEntry {
   /** 规范化设备名（去掉尾部 _） */
@@ -58,8 +48,6 @@ export class ModelModule implements SceneModule<ModelConfig> {
   private meshToBimDevice = new Map<AbstractMesh, BimDeviceEntry>()
   /** 设备根节点 → 所属设备 */
   private nodeToBimDevice = new Map<Node, BimDeviceEntry>()
-  /** 管道 mesh 名 → 管道 */
-  private pipeIndex = new Map<string, PipeEntry>()
 
   setCameraModule(cameraModule: CameraModule): void {
     this.cameraModule = cameraModule
@@ -103,7 +91,6 @@ export class ModelModule implements SceneModule<ModelConfig> {
       this.syncAnimationsToConfig(config)
       this.bindControlsAndCamera()
       this.buildBimDeviceIndex()
-      this.buildPipeIndex()
     } else if (config.fixTransparentDepth) {
       // 配置开关从关到开时补一次修复
       this.fixTransparentMaterials()
@@ -250,28 +237,6 @@ export class ModelModule implements SceneModule<ModelConfig> {
 
   /** 「设备_指定名称」组下的 BIM_* 设备根节点 */
   static readonly DEVICE_GROUP_NAME = '设备_指定名称'
-  /** 「设备_管道」组下的管道 mesh */
-  static readonly PIPE_GROUP_NAME = '设备_管道'
-
-  /** 读取 glTF extras / 节点自定义数据（shuibeng、famen 等） */
-  static readNodeExtras(node: Node): Record<string, unknown> {
-    const meta = (node as { metadata?: Record<string, unknown> }).metadata
-    if (!meta) return {}
-    const gltf = meta.gltf as { extras?: Record<string, unknown> } | undefined
-    if (gltf?.extras && typeof gltf.extras === 'object') {
-      return gltf.extras
-    }
-    return meta
-  }
-
-  /** 解析 shuibeng / famen 等 / 分隔的设备名列表 */
-  static parseDeviceRefList(raw: unknown): string[] {
-    if (typeof raw !== 'string' || !raw.trim()) return []
-    return raw
-      .split('/')
-      .map((s) => ModelModule.normalizeDeviceName(s.trim()))
-      .filter(Boolean)
-  }
 
   /**
    * 规范化设备名：去掉尾部下划线，便于 BIM_主机_1 与 BIM_主机_1_ 互配
@@ -282,6 +247,11 @@ export class ModelModule implements SceneModule<ModelConfig> {
       .replace(/_+$/g, '')
   }
 
+  /** 业务变换根节点（位移/旋转/缩放与 autoCenter 作用于此） */
+  getModelPivot(): TransformNode | null {
+    return this.pivot
+  }
+
   /** 已索引的全部 BIM 设备 */
   getBimDeviceEntries(): BimDeviceEntry[] {
     return [...this.bimDeviceIndex.values()]
@@ -289,14 +259,6 @@ export class ModelModule implements SceneModule<ModelConfig> {
 
   getBimDeviceEntry(objectName: string): BimDeviceEntry | null {
     return this.bimDeviceIndex.get(ModelModule.normalizeDeviceName(objectName)) ?? null
-  }
-
-  getPipeEntries(): PipeEntry[] {
-    return [...this.pipeIndex.values()]
-  }
-
-  getPipeEntry(meshName: string): PipeEntry | null {
-    return this.pipeIndex.get(meshName) ?? null
   }
 
   /** 在场景树中按名称查找节点（含深层子级） */
@@ -384,45 +346,6 @@ export class ModelModule implements SceneModule<ModelConfig> {
     )
     if (!this.bimDeviceIndex.size) {
       console.warn(`[model] no BIM devices found under "${ModelModule.DEVICE_GROUP_NAME}"`)
-    }
-  }
-
-  /**
-   * 模型加载后索引「设备_管道」组下第一层 mesh（不递归）
-   * extras：shuibeng、famen（/ 分隔关联设备名）
-   */
-  private buildPipeIndex(): void {
-    this.pipeIndex.clear()
-    if (!this.container) return
-
-    const groups = this.findNodesByName(ModelModule.PIPE_GROUP_NAME)
-    for (const group of groups) {
-      for (const child of group.getChildren()) {
-        if (!this.isMeshNode(child)) continue
-        const mesh = child as AbstractMesh
-        const extras = ModelModule.readNodeExtras(child)
-        const pumps = ModelModule.parseDeviceRefList(extras.shuibeng)
-        const valves = ModelModule.parseDeviceRefList(extras.famen)
-
-        const entry: PipeEntry = {
-          meshName: mesh.name,
-          mesh,
-          pumps,
-          valves,
-        }
-        this.pipeIndex.set(mesh.name, entry)
-        mesh.isPickable = false
-      }
-    }
-
-    console.info(
-      `[model] pipes indexed: ${this.pipeIndex.size}` +
-        (this.pipeIndex.size
-          ? ` (e.g. ${[...this.pipeIndex.keys()].slice(0, 3).join(', ')})`
-          : ''),
-    )
-    if (!this.pipeIndex.size) {
-      console.warn(`[model] no pipes found under "${ModelModule.PIPE_GROUP_NAME}"`)
     }
   }
 
@@ -759,7 +682,6 @@ export class ModelModule implements SceneModule<ModelConfig> {
     this.bimDeviceIndex.clear()
     this.meshToBimDevice.clear()
     this.nodeToBimDevice.clear()
-    this.pipeIndex.clear()
     // root 随 container dispose；pivot 需单独释放
     this.pivot?.dispose()
     this.pivot = null
