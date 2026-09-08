@@ -1,5 +1,6 @@
 /**
- * 工况管线水流：根据 MODEL_UPDATE 判定工况线条，沿路径生成管道 + 表面贴图滚动模拟水流
+ * 工况管线水流：根据 MODEL_UPDATE 判定工况线条，沿路径生成管道 + FlowLight 流光
+ * （效果对齐 bl_tongfeng FlowLight2 tube shader）
  */
 import '@babylonjs/loaders/glTF'
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
@@ -8,9 +9,11 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector'
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer'
 import { CreateTube } from '@babylonjs/core/Meshes/Builders/tubeBuilder'
 import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder'
+import { Effect } from '@babylonjs/core/Materials/effect'
+import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
-import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture'
-import { Texture } from '@babylonjs/core/Materials/Textures/texture'
+import { Material } from '@babylonjs/core/Materials/material'
+import { Constants } from '@babylonjs/core/Engines/constants'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
@@ -23,17 +26,72 @@ import type { ModelUpdateObject } from '../message/types'
 
 const LINES_MODEL_URL = '/models/广州双叶厂房_工况Lines.glb'
 
-/** 管道半径 */
-const PIPE_RADIUS = 0.85
+/** 管道半径（底管，对齐巷道本体着色） */
+const PIPE_RADIUS = 0.05
+/** 流光管略粗，避免与底管 z-fight */
+const FLOW_RADIUS_SCALE = 1.08
+/** 外层柔光（模拟 SelectiveBloom 光晕） */
+const FLOW_GLOW_RADIUS_SCALE = 1.55
 /** 管道截面边数 */
 const PIPE_TESSELLATION = 12
 /** 路径重采样间距（保证 UV 均匀） */
 const PATH_RESAMPLE_SPACING = 1.0
-/** 贴图滚动速度（纹理周期 / 秒） */
-const FLOW_SCROLL_SPEED = 0.55
-/** 每多少场景单位重复一节水流贴图 */
-const FLOW_BAND_SPACING = 4.0
+/**
+ * 流光段波长（场景单位）：每段流光占用的弧长，所有管子统一
+ * 原项目为 length/200 段 → 波长约 200
+ */
+const FLOW_SEGMENT_SPACING = 8
+/** 流光速度（对齐 FlowLight2 uniform speed，片元内再 * 0.04） */
+const FLOW_SPEED = 22
+/** 流光不透明度 */
+const FLOW_OPACITY = 0.4
+/** 亮色 / 暗色（对齐巷道进风流光默认色） */
+const FLOW_COLOR1 = new Color3(0.0235, 0.9647, 0.9333)
+const FLOW_COLOR2 = new Color3(0.0196, 0.3373, 0.4824)
 const DEBUG_MARKER_SIZE = 4
+
+const FLOW_LIGHT_SHADER = 'pipeFlowLight'
+
+let flowLightShaderRegistered = false
+
+function ensureFlowLightShader(): void {
+  if (flowLightShaderRegistered) return
+  flowLightShaderRegistered = true
+
+  Effect.ShadersStore[`${FLOW_LIGHT_SHADER}VertexShader`] = `
+precision highp float;
+attribute vec3 position;
+attribute vec2 uv;
+uniform mat4 worldViewProjection;
+varying vec2 vUV;
+void main(void) {
+  vUV = uv;
+  gl_Position = worldViewProjection * vec4(position, 1.0);
+}`
+
+  // CreateTube：uv.y 经弧长烘焙后为「距离 / spacing」，各管流光波长一致
+  Effect.ShadersStore[`${FLOW_LIGHT_SHADER}FragmentShader`] = `
+precision highp float;
+uniform float uElapseTime;
+uniform float uCount;
+uniform vec3 uColor1;
+uniform vec3 uColor2;
+uniform float uOpacity;
+uniform float uSpeed;
+uniform float uGlowBoost;
+varying vec2 vUV;
+void main(void) {
+  // vUV.y：沿管弧长 / FLOW_SEGMENT_SPACING，单位波长在世界空间恒定
+  float al = fract(vUV.y - uElapseTime * uSpeed * 0.04);
+  float flash = pow(al, 4.0);
+  vec3 color = mix(uColor2, uColor1, flash);
+  color += uColor1 * pow(al, 8.0) * uGlowBoost;
+  float a = al * al;
+  float pathT = uCount > 1e-4 ? clamp(vUV.y / uCount, 0.0, 1.0) : 0.0;
+  float final_a = a * step(pathT, uElapseTime);
+  gl_FragColor = vec4(color, final_a * uOpacity);
+}`
+}
 
 const PUMP_1 = 'BIM_放冷泵_1'
 const PUMP_2 = 'BIM_放冷泵_2'
@@ -383,65 +441,78 @@ function resamplePathEvenly(pts: Vector3[], spacing: number): Vector3[] {
   return out
 }
 
-/** CreateTube：U 环绕、V 沿路径 0~1 → 乘以管长，使贴图按真实距离均匀重复 */
-function scaleTubeUvByPathLength(tube: Mesh, length: number): void {
+/** 将 CreateTube 的 V(0~1) 转为弧长/spacing，保证各管流光波长一致 */
+function bakeTubeUvByArcLength(tube: Mesh, pathLength: number, spacing: number): void {
   const uvs = tube.getVerticesData(VertexBuffer.UVKind)
   if (!uvs?.length) return
-  const len = Math.max(length, 0.01)
+  const bands = Math.max(pathLength, 1e-4) / Math.max(spacing, 1e-4)
   for (let i = 1; i < uvs.length; i += 2) {
-    uvs[i] = uvs[i]! * len
+    uvs[i] = uvs[i]! * bands
   }
   tube.setVerticesData(VertexBuffer.UVKind, uvs, false)
 }
 
-/** 生成蓝色水流条纹贴图（沿 V 滚动） */
-function createWaterFlowTexture(scene: Scene): DynamicTexture {
-  const w = 128
-  const h = 256
-  const tex = new DynamicTexture('pipeWaterFlowTex', { width: w, height: h }, scene, false)
-  const ctx = tex.getContext()
-
-  for (let y = 0; y < h; y++) {
-    const t = y / h
-    // 深蓝底 + 青色亮带
-    const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 2)
-    const wave2 = 0.5 + 0.5 * Math.sin(t * Math.PI * 4 + 0.8)
-    const foam = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2)), 8)
-    const r = 10 + wave * 30 + foam * 140
-    const g = 70 + wave * 90 + wave2 * 40 + foam * 100
-    const b = 150 + wave * 70 + foam * 50
-    ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`
-    ctx.fillRect(0, y, w, 1)
-  }
-
-  // 环向轻微高光，增加管体立体感
-  const grad = ctx.createLinearGradient(0, 0, w, 0)
-  grad.addColorStop(0, 'rgba(0,0,0,0.25)')
-  grad.addColorStop(0.35, 'rgba(255,255,255,0.12)')
-  grad.addColorStop(0.65, 'rgba(0,0,0,0.05)')
-  grad.addColorStop(1, 'rgba(0,0,0,0.28)')
-  ctx.fillStyle = grad
-  ctx.fillRect(0, 0, w, h)
-
-  tex.hasAlpha = false
-  tex.wrapU = Texture.WRAP_ADDRESSMODE
-  tex.wrapV = Texture.WRAP_ADDRESSMODE
-  tex.update()
-  return tex
-}
-
-function createWaterPipeMaterial(scene: Scene, texture: DynamicTexture): StandardMaterial {
-  const mat = new StandardMaterial('pipeWaterMat', scene)
-  // V 为场景距离时：1 / FLOW_BAND_SPACING = 每节水流对应的纹理重复
-  texture.vScale = 1 / FLOW_BAND_SPACING
-  texture.uScale = 1
-  mat.diffuseTexture = texture
-  mat.emissiveTexture = texture
-  mat.emissiveColor = new Color3(0.45, 0.65, 0.95)
-  mat.specularColor = new Color3(0.25, 0.35, 0.45)
-  mat.diffuseColor = new Color3(0.85, 0.9, 1.0)
+/** 底管材质：对齐原巷道着色 color2 */
+function createPipeBaseMaterial(scene: Scene): StandardMaterial {
+  const mat = new StandardMaterial('pipeFlowBaseMat', scene)
+  mat.diffuseColor = FLOW_COLOR2.clone()
+  mat.emissiveColor = FLOW_COLOR2.scale(0.85)
+  mat.specularColor = Color3.Black()
+  mat.disableLighting = true
   mat.backFaceCulling = true
   return mat
+}
+
+/** FlowLight 材质；uCount = pathLength/spacing（仅用于显现进度） */
+function createFlowLightMaterial(
+  scene: Scene,
+  name: string,
+  pathBandCount: number,
+  options?: { opacity?: number; glowBoost?: number; additive?: boolean },
+): ShaderMaterial {
+  ensureFlowLightShader()
+  const mat = new ShaderMaterial(
+    name,
+    scene,
+    { vertex: FLOW_LIGHT_SHADER, fragment: FLOW_LIGHT_SHADER },
+    {
+      attributes: ['position', 'uv'],
+      uniforms: [
+        'worldViewProjection',
+        'uElapseTime',
+        'uCount',
+        'uColor1',
+        'uColor2',
+        'uOpacity',
+        'uSpeed',
+        'uGlowBoost',
+      ],
+      needAlphaBlending: true,
+    },
+  )
+  mat.backFaceCulling = false
+  mat.disableDepthWrite = true
+  mat.transparencyMode = Material.MATERIAL_ALPHABLEND
+  mat.alphaMode = options?.additive ? Constants.ALPHA_ADD : Constants.ALPHA_COMBINE
+  mat.setFloat('uElapseTime', 0)
+  mat.setFloat('uCount', Math.max(pathBandCount, 1e-4))
+  mat.setColor3('uColor1', FLOW_COLOR1)
+  mat.setColor3('uColor2', FLOW_COLOR2)
+  mat.setFloat('uOpacity', options?.opacity ?? FLOW_OPACITY)
+  mat.setFloat('uSpeed', FLOW_SPEED)
+  mat.setFloat('uGlowBoost', options?.glowBoost ?? 0.85)
+  return mat
+}
+
+/** 对齐原版 depthTest:false：绘制流光时关闭深度测试 */
+function bindFlowDepthTestOff(mesh: Mesh): void {
+  const engine = mesh.getScene().getEngine()
+  mesh.onBeforeRenderObservable.add(() => {
+    engine.setDepthBuffer(false)
+  })
+  mesh.onAfterRenderObservable.add(() => {
+    engine.setDepthBuffer(true)
+  })
 }
 
 function createMarker(
@@ -467,7 +538,9 @@ function createMarker(
 interface FlowLineEntry {
   lineName: string
   root: TransformNode
-  tubes: Mesh[]
+  baseTubes: Mesh[]
+  flowTubes: Mesh[]
+  flowMats: ShaderMaterial[]
   startMarker: Mesh
   endMarker: Mesh
   segmentCount: number
@@ -498,8 +571,7 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     root.parent = parent
   }
 
-  const waterTex = createWaterFlowTexture(scene)
-  const waterMat = createWaterPipeMaterial(scene, waterTex)
+  const baseMat = createPipeBaseMaterial(scene)
   const entries: FlowLineEntry[] = []
   const expectedNames = WORKING_CONDITION_RULES.map((r) => r.lineName)
 
@@ -550,7 +622,9 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     group.parent = lineParent
     group.setEnabled(false)
 
-    const tubes: Mesh[] = []
+    const baseTubes: Mesh[] = []
+    const flowTubes: Mesh[] = []
+    const flowMats: ShaderMaterial[] = []
     for (let i = 0; i < paths.length; i++) {
       let pts = flatToVectors(paths[i]!)
       if (pts.length < 2) continue
@@ -560,8 +634,9 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
       if (pts.length < 2 || len < 0.05) continue
 
       try {
-        const tube = CreateTube(
-          `flow_tube_${lineName}_${i}`,
+        const bandCount = len / FLOW_SEGMENT_SPACING
+        const baseTube = CreateTube(
+          `flow_base_${lineName}_${i}`,
           {
             path: pts,
             radius: PIPE_RADIUS,
@@ -572,18 +647,71 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
           },
           scene,
         )
-        scaleTubeUvByPathLength(tube, len)
-        tube.material = waterMat
-        tube.isPickable = false
-        tube.parent = group
-        tubes.push(tube)
+        baseTube.material = baseMat
+        baseTube.isPickable = false
+        baseTube.parent = group
+        baseTubes.push(baseTube)
+
+        const flowMat = createFlowLightMaterial(scene, `flow_light_mat_${lineName}_${i}`, bandCount, {
+          opacity: 1,
+          glowBoost: 0.9,
+          additive: false,
+        })
+        const flowTube = CreateTube(
+          `flow_light_${lineName}_${i}`,
+          {
+            path: pts,
+            radius: PIPE_RADIUS * FLOW_RADIUS_SCALE,
+            tessellation: PIPE_TESSELLATION,
+            cap: Mesh.NO_CAP,
+            updatable: false,
+            sideOrientation: Mesh.DOUBLESIDE,
+          },
+          scene,
+        )
+        bakeTubeUvByArcLength(flowTube, len, FLOW_SEGMENT_SPACING)
+        flowTube.material = flowMat
+        flowTube.isPickable = false
+        flowTube.parent = group
+        flowTube.alphaIndex = 1
+        bindFlowDepthTestOff(flowTube)
+        flowTubes.push(flowTube)
+        flowMats.push(flowMat)
+
+        // 外层加法柔光，近似原项目 SelectiveBloom
+        const glowMat = createFlowLightMaterial(scene, `flow_glow_mat_${lineName}_${i}`, bandCount, {
+          opacity: 0.45,
+          glowBoost: 1.6,
+          additive: true,
+        })
+        const glowTube = CreateTube(
+          `flow_glow_${lineName}_${i}`,
+          {
+            path: pts,
+            radius: PIPE_RADIUS * FLOW_GLOW_RADIUS_SCALE,
+            tessellation: PIPE_TESSELLATION,
+            cap: Mesh.NO_CAP,
+            updatable: false,
+            sideOrientation: Mesh.DOUBLESIDE,
+          },
+          scene,
+        )
+        bakeTubeUvByArcLength(glowTube, len, FLOW_SEGMENT_SPACING)
+        glowTube.material = glowMat
+        glowTube.isPickable = false
+        glowTube.parent = group
+        glowTube.alphaIndex = 2
+        bindFlowDepthTestOff(glowTube)
+        flowTubes.push(glowTube)
+        flowMats.push(glowMat)
       } catch (err) {
         console.warn(`[pipeFlow] tube create failed ${lineName}#${i}`, err)
       }
     }
 
-    if (!tubes.length) {
+    if (!baseTubes.length) {
       console.warn(`[pipeFlow] no tubes for "${lineName}"`)
+      for (const mat of flowMats) mat.dispose()
       group.dispose()
       continue
     }
@@ -606,12 +734,14 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     entries.push({
       lineName,
       root: group,
-      tubes,
+      baseTubes,
+      flowTubes,
+      flowMats,
       startMarker,
       endMarker,
       segmentCount: segments.length,
       polyCount: paths.length,
-      tubeCount: tubes.length,
+      tubeCount: baseTubes.length,
     })
   }
 
@@ -627,16 +757,21 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
 
   let activeName: string | null = null
   let debugLineOverride: string | null | undefined = undefined
-  let scroll = 0
+  let elapseTime = 0
 
   const setActive = (lineName: string | null): void => {
     if (lineName === activeName) return
     activeName = lineName
+    // 切换工况时重置时间，复现 FlowLight 沿路径逐渐显现
+    elapseTime = 0
     for (const entry of entries) {
       const on = entry.lineName === lineName
       entry.root.setEnabled(on)
       entry.startMarker.setEnabled(on)
       entry.endMarker.setEnabled(on)
+      if (on) {
+        for (const mat of entry.flowMats) mat.setFloat('uElapseTime', 0)
+      }
     }
     if (lineName) {
       const hit = entries.find((e) => e.lineName === lineName)
@@ -667,9 +802,12 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
   const renderObserver = scene.onBeforeRenderObservable.add(() => {
     if (!activeName) return
     const dt = scene.getEngine().getDeltaTime() * 0.001
-    // CreateTube V 沿路径：滚动 vOffset → 贴图从起点流向终点
-    scroll = (scroll + FLOW_SCROLL_SPEED * dt) % 1
-    waterTex.vOffset = scroll
+    elapseTime += dt
+    const active = entries.find((e) => e.lineName === activeName)
+    if (!active) return
+    for (const mat of active.flowMats) {
+      mat.setFloat('uElapseTime', elapseTime)
+    }
   })
 
   refreshAll()
@@ -698,14 +836,15 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     dispose() {
       scene.onBeforeRenderObservable.remove(renderObserver)
       for (const entry of entries) {
-        for (const tube of entry.tubes) tube.dispose()
+        for (const tube of entry.baseTubes) tube.dispose()
+        for (const tube of entry.flowTubes) tube.dispose()
+        for (const mat of entry.flowMats) mat.dispose()
         entry.root.dispose()
         entry.startMarker.dispose()
         entry.endMarker.dispose()
       }
       entries.length = 0
-      waterMat.dispose()
-      waterTex.dispose()
+      baseMat.dispose()
       container?.removeAllFromScene()
       container?.dispose()
       container = null
