@@ -1,16 +1,26 @@
-import { isModelUpdateMessage, MSG_MODEL_UPDATE, type CmdMessage } from './types'
+import {
+  isModelUpdateMessage,
+  isPipeFlowDebugMessage,
+  MSG_MODEL_UPDATE,
+  MSG_PIPE_FLOW_DEBUG,
+  type CmdMessage,
+  type PipeFlowDebugMessage,
+} from './types'
 import { upsertDeviceMetrics } from '../business/deviceMetrics'
 
 export type ModelUpdateHandler = (objects: import('./types').ModelUpdateObject[]) => void
+export type PipeFlowDebugHandler = (msg: PipeFlowDebugMessage) => void
 
 /**
  * 三维侧监听父页面 message（参考 zhaotong onMessage.js）
  * 支持：
  * 1) { type: 'MODEL_UPDATE', objects: [...] }
  * 2) { cmd: 'MODEL_UPDATE', param: { objects: [...] } } 或 param 直接为 objects 数组
+ * 3) { type: 'PIPE_FLOW_DEBUG', action, lineName?, visible? }
  */
 export function startOnMessage(options?: {
   onModelUpdate?: ModelUpdateHandler
+  onPipeFlowDebug?: PipeFlowDebugHandler
 }): () => void {
   const handler = (event: MessageEvent): void => {
     const data = event.data
@@ -21,6 +31,12 @@ export function startOnMessage(options?: {
       upsertDeviceMetrics(data.objects)
       options?.onModelUpdate?.(data.objects)
       console.info(`[message] ${MSG_MODEL_UPDATE} objects=${data.objects.length}`)
+      return
+    }
+
+    if (isPipeFlowDebugMessage(data)) {
+      options?.onPipeFlowDebug?.(data)
+      console.info(`[message] ${MSG_PIPE_FLOW_DEBUG} action=${data.action}`)
       return
     }
 
@@ -39,6 +55,18 @@ export function startOnMessage(options?: {
         options?.onModelUpdate?.(objects)
         console.info(`[message] cmd ${MSG_MODEL_UPDATE} objects=${objects.length}`)
       }
+      return
+    }
+
+    if (cmdMsg.cmd === MSG_PIPE_FLOW_DEBUG && cmdMsg.param && typeof cmdMsg.param === 'object') {
+      const p = cmdMsg.param as PipeFlowDebugMessage
+      options?.onPipeFlowDebug?.({
+        type: MSG_PIPE_FLOW_DEBUG,
+        action: p.action,
+        lineName: p.lineName,
+        visible: p.visible,
+      })
+      console.info(`[message] cmd ${MSG_PIPE_FLOW_DEBUG} action=${p.action}`)
     }
   }
 

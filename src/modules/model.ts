@@ -252,6 +252,23 @@ export class ModelModule implements SceneModule<ModelConfig> {
     return this.pivot
   }
 
+  /** 厂房主体 glTF 根节点（不含额外挂到 pivot 上的工况线等） */
+  getModelRoot(): TransformNode | null {
+    return this.root
+  }
+
+  /** 仅显隐厂房主体模型，不影响 pivot 上挂载的工况线/调试体 */
+  setMainModelVisible(visible: boolean): void {
+    if (this.root) {
+      this.root.setEnabled(visible)
+      return
+    }
+    if (!this.container) return
+    for (const mesh of this.container.meshes) {
+      mesh.setEnabled(visible)
+    }
+  }
+
   /** 已索引的全部 BIM 设备 */
   getBimDeviceEntries(): BimDeviceEntry[] {
     return [...this.bimDeviceIndex.values()]

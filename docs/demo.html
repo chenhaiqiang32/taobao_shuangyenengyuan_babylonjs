@@ -25,7 +25,7 @@
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 12px 20px;
+        gap: 10px 14px;
         padding: 10px 16px;
         background: #121a2b;
         border-bottom: 1px solid rgba(0, 220, 255, 0.25);
@@ -49,6 +49,24 @@
       }
       .bar button:hover {
         background: rgba(0, 70, 80, 0.8);
+      }
+      .bar button.active {
+        background: rgba(0, 140, 160, 0.95);
+        border-color: #5ef0ff;
+      }
+      .bar button.danger {
+        border-color: rgba(255, 120, 80, 0.7);
+      }
+      .flow-group {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+      .flow-group .label {
+        color: rgba(232, 240, 255, 0.75);
+        font-size: 12px;
+        margin-right: 2px;
       }
       #viewer {
         width: 100%;
@@ -79,29 +97,83 @@
     <div class="layout">
       <div class="bar">
         <h1>demo.html · iframe 嵌入三维</h1>
-        <span class="meta">每 10 秒推送 model-update.json · MODEL_UPDATE</span>
+        <span class="meta">推送 model-update(2).json · MODEL_UPDATE</span>
         <button type="button" id="btnPush">立即推送一次</button>
+        <button type="button" id="btnToggleModel" class="danger">显示厂房模型</button>
+        <div class="flow-group" id="flowButtons">
+          <span class="label">工况线：</span>
+          <button type="button" data-line="" class="active">自动(数据)</button>
+          <button type="button" data-line="ZJDDGL主机单独供冷">主机单独供冷</button>
+          <button type="button" data-line="XSGGL蓄水罐供冷">蓄水罐供冷</button>
+          <button type="button" data-line="ZJXL主机蓄冷">主机蓄冷</button>
+          <button type="button" data-line="LHGL联合供冷">联合供冷</button>
+          <button type="button" data-line="BGBX边供边蓄">边供边蓄</button>
+        </div>
         <span class="meta" id="status">等待三维加载…</span>
+        <span class="meta" id="flowStatus">线：-</span>
       </div>
-      <!-- 相对路径：开发与 GitHub Pages（base）下均可定位到同目录 index -->
-      <iframe id="viewer" title="三维场景" src="http://localhost:5174/taobao_shuangyenengyuan_babylonjs/" allow="fullscreen"></iframe>
+      <!-- 与 vite 同域：demo.html 与 index.html 均在站点根 -->
+      <iframe id="viewer" title="三维场景" src="./index.html" allow="fullscreen"></iframe>
     </div>
     <div id="log"></div>
 
     <script>
       const iframe = document.getElementById('viewer')
       const statusEl = document.getElementById('status')
+      const flowStatusEl = document.getElementById('flowStatus')
       const logEl = document.getElementById('log')
+      const btnToggleModel = document.getElementById('btnToggleModel')
       const INTERVAL_MS = 10000
       const DATA_URL = './model-update(2).json'
 
       /** 缓存 model-update.json 中的 MODEL_UPDATE 载荷 */
       let cachedPayload = null
       let pendingPush = false
+      let mainModelVisible = false
+      let activeDebugLine = '' // '' = 自动
 
       function log(msg) {
         const line = `[${new Date().toLocaleTimeString()}] ${msg}`
         logEl.textContent = `${line}\n${logEl.textContent}`.slice(0, 4000)
+      }
+
+      function postToViewer(payload) {
+        const win = iframe.contentWindow
+        if (!win) {
+          log('iframe 未就绪')
+          return false
+        }
+        win.postMessage(payload, '*')
+        return true
+      }
+
+      function setFlowLine(lineName) {
+        activeDebugLine = lineName || ''
+        for (const btn of document.querySelectorAll('#flowButtons button[data-line]')) {
+          btn.classList.toggle('active', (btn.getAttribute('data-line') || '') === activeDebugLine)
+        }
+        const ok = postToViewer({
+          type: 'PIPE_FLOW_DEBUG',
+          action: 'setLine',
+          lineName: activeDebugLine ? activeDebugLine : null,
+        })
+        if (ok) {
+          flowStatusEl.textContent = activeDebugLine
+            ? `线(调试)：${activeDebugLine}`
+            : '线：自动(数据匹配)'
+          log(`→ PIPE_FLOW_DEBUG setLine=${activeDebugLine || '(auto)'}`)
+        }
+      }
+
+      function setMainModelVisible(visible) {
+        mainModelVisible = visible
+        btnToggleModel.textContent = visible ? '隐藏厂房模型' : '显示厂房模型'
+        const ok = postToViewer({
+          type: 'PIPE_FLOW_DEBUG',
+          action: 'setMainModelVisible',
+          visible,
+        })
+        if (ok) log(`→ PIPE_FLOW_DEBUG setMainModelVisible=${visible}`)
       }
 
       async function loadPayload() {
@@ -112,13 +184,12 @@
           throw new Error('model-update.json 格式无效')
         }
         cachedPayload = data
-        log(`已加载 model-update.json · ${data.objects.length} 台设备`)
+        log(`已加载 model-update(2).json · ${data.objects.length} 台设备`)
         return data
       }
 
       function buildPayload() {
         if (!cachedPayload) return null
-        // 深拷贝，避免 postMessage 结构化克隆影响缓存；并刷新采集时间便于观察推送
         const payload = structuredClone(cachedPayload)
         const now = new Date().toLocaleString()
         for (const obj of payload.objects) {
@@ -130,18 +201,13 @@
       }
 
       function pushUpdate() {
-        const win = iframe.contentWindow
-        if (!win) {
-          log('iframe 未就绪，跳过推送')
-          return
-        }
         if (!cachedPayload) {
           pendingPush = true
-          statusEl.textContent = '正在加载 model-update.json…'
+          statusEl.textContent = '正在加载 model-update(2).json…'
           return
         }
         const payload = buildPayload()
-        win.postMessage(payload, '*')
+        if (!postToViewer(payload)) return
         statusEl.textContent = `已推送 ${payload.objects.length} 台设备 · ${new Date().toLocaleTimeString()}`
         const sample = payload.objects
           .slice(0, 4)
@@ -151,8 +217,14 @@
       }
 
       document.getElementById('btnPush').addEventListener('click', pushUpdate)
+      btnToggleModel.addEventListener('click', () => setMainModelVisible(!mainModelVisible))
 
-      // 接收三维回传（onLoaded / 设备点击等）
+      document.getElementById('flowButtons').addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-line]')
+        if (!btn) return
+        setFlowLine(btn.getAttribute('data-line') || '')
+      })
+
       window.addEventListener('message', (event) => {
         if (event.source !== iframe.contentWindow) return
         const data = event.data
@@ -160,13 +232,23 @@
         if (data.cmd === 'onLoaded') {
           statusEl.textContent = '三维已加载，开始定时推送'
           log('← onLoaded')
+          // 三维侧默认已隐藏厂房；同步按钮文案，并推送数据 + 当前调试线
+          mainModelVisible = false
+          btnToggleModel.textContent = '显示厂房模型'
           pushUpdate()
+          if (activeDebugLine) setFlowLine(activeDebugLine)
         } else if (data.cmd === 'onLoading') {
           log('← onLoading')
         } else if (data.cmd === 'web3dDeviceClick') {
           log(`← web3dDeviceClick ${JSON.stringify(data.param)}`)
         } else if (data.cmd === 'web3dDevicePanelClose') {
           log(`← web3dDevicePanelClose ${JSON.stringify(data.param)}`)
+        } else if (data.cmd === 'pipeFlowDebugState') {
+          const p = data.param || {}
+          flowStatusEl.textContent = p.activeLineName
+            ? `线：${p.activeLineName}`
+            : '线：无匹配'
+          log(`← pipeFlowDebugState active=${p.activeLineName || '(none)'}`)
         }
       })
 
@@ -178,7 +260,7 @@
           }
         })
         .catch((err) => {
-          statusEl.textContent = 'model-update.json 加载失败'
+          statusEl.textContent = 'model-update(2).json 加载失败'
           log(`加载失败: ${err.message || err}`)
         })
 

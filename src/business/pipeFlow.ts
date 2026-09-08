@@ -1,19 +1,21 @@
 /**
- * 工况管线水流：根据 MODEL_UPDATE 判定工况线条，沿路径生成 GreasedLine 着色器流动效果
+ * 工况管线水流：根据 MODEL_UPDATE 判定工况线条，沿路径生成管道 + 表面贴图滚动模拟水流
  */
 import '@babylonjs/loaders/glTF'
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
+import { Vector3 } from '@babylonjs/core/Maths/math.vector'
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer'
-import { CreateGreasedLine } from '@babylonjs/core/Meshes/Builders/greasedLineBuilder'
-import {
-  GreasedLineMeshMaterialType,
-  type IGreasedLineMaterial,
-} from '@babylonjs/core/Materials/GreasedLine/greasedLineMaterialInterfaces'
+import { CreateTube } from '@babylonjs/core/Meshes/Builders/tubeBuilder'
+import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder'
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture'
+import { Texture } from '@babylonjs/core/Materials/Textures/texture'
+import { Mesh } from '@babylonjs/core/Meshes/mesh'
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import type { AssetContainer } from '@babylonjs/core/assetContainer'
-import type { GreasedLineBaseMesh } from '@babylonjs/core/Meshes/GreasedLine/greasedLineBaseMesh'
-import type { TransformNode } from '@babylonjs/core/Meshes/transformNode'
+import type { Scene } from '@babylonjs/core/scene'
 import { withBase } from '../config/baseUrl'
 import type { AppOrchestrator } from '../core/app'
 import { getDeviceMetrics } from './deviceMetrics'
@@ -21,10 +23,17 @@ import type { ModelUpdateObject } from '../message/types'
 
 const LINES_MODEL_URL = '/models/广州双叶厂房_工况Lines.glb'
 
-/** 虚线滚动速度（dashOffset / 秒） */
-const FLOW_DASH_SPEED = 0.35
-const FLOW_LINE_WIDTH = 0.35
-const FLOW_COLOR = new Color3(0.15, 0.75, 1)
+/** 管道半径 */
+const PIPE_RADIUS = 0.85
+/** 管道截面边数 */
+const PIPE_TESSELLATION = 12
+/** 路径重采样间距（保证 UV 均匀） */
+const PATH_RESAMPLE_SPACING = 1.0
+/** 贴图滚动速度（纹理周期 / 秒） */
+const FLOW_SCROLL_SPEED = 0.55
+/** 每多少场景单位重复一节水流贴图 */
+const FLOW_BAND_SPACING = 4.0
+const DEBUG_MARKER_SIZE = 4
 
 const PUMP_1 = 'BIM_放冷泵_1'
 const PUMP_2 = 'BIM_放冷泵_2'
@@ -49,12 +58,18 @@ type RuleCheck =
   | { type: 'closed'; device: string; kind: DeviceKind }
 
 interface WorkingConditionRule {
-  /** 与 GLB 中线条节点名一致 */
   lineName: string
   checks: RuleCheck[]
 }
 
-/** 与 public/1.xlsx 工况判定表一致 */
+export const WORKING_CONDITION_LINE_NAMES = [
+  'ZJDDGL主机单独供冷',
+  'XSGGL蓄水罐供冷',
+  'ZJXL主机蓄冷',
+  'LHGL联合供冷',
+  'BGBX边供边蓄',
+] as const
+
 const WORKING_CONDITION_RULES: WorkingConditionRule[] = [
   {
     lineName: 'ZJDDGL主机单独供冷',
@@ -134,6 +149,9 @@ export interface PipeFlowApi {
   applyFromUpdate: (objects: ModelUpdateObject[]) => void
   refreshAll: () => void
   getActiveLineName: () => string | null
+  setDebugLine: (lineName: string | null) => void
+  getLineNames: () => string[]
+  setMainModelVisible: (visible: boolean) => void
   dispose: () => void
 }
 
@@ -163,7 +181,6 @@ function passesCheck(check: RuleCheck): boolean {
   return check.devices.some((name) => isDeviceOpen(name, check.kind))
 }
 
-/** 按表匹配当前工况线条名；无匹配返回 null */
 export function resolveWorkingConditionLineName(): string | null {
   for (const rule of WORKING_CONDITION_RULES) {
     if (rule.checks.every(passesCheck)) return rule.lineName
@@ -171,7 +188,6 @@ export function resolveWorkingConditionLineName(): string | null {
   return null
 }
 
-/** 从 LINES 网格提取线段路径（每条线段 2 点） */
 function extractLinePaths(mesh: AbstractMesh): number[][] {
   const positions = mesh.getVerticesData(VertexBuffer.PositionKind)
   const indices = mesh.getIndices()
@@ -193,15 +209,270 @@ function extractLinePaths(mesh: AbstractMesh): number[][] {
   return paths
 }
 
-function asFlowMaterial(mesh: GreasedLineBaseMesh): IGreasedLineMaterial | null {
-  const mat = mesh.material as unknown as IGreasedLineMaterial | null
-  return mat && typeof (mat as { dashOffset?: unknown }).dashOffset === 'number' ? mat : null
+function keyPoint(x: number, y: number, z: number): string {
+  return `${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`
+}
+
+function flatToVectors(flat: number[]): Vector3[] {
+  const pts: Vector3[] = []
+  for (let i = 0; i + 2 < flat.length; i += 3) {
+    pts.push(new Vector3(flat[i], flat[i + 1], flat[i + 2]))
+  }
+  return pts
+}
+
+function pathLength(pts: Vector3[]): number {
+  let len = 0
+  for (let i = 1; i < pts.length; i++) {
+    len += Vector3.Distance(pts[i - 1]!, pts[i]!)
+  }
+  return len
+}
+
+function stitchPolylines(segments: number[][]): number[][] {
+  type Pt = [number, number, number]
+  const adj = new Map<string, { pos: Pt; next: string[] }>()
+
+  const ensure = (x: number, y: number, z: number): string => {
+    const k = keyPoint(x, y, z)
+    if (!adj.has(k)) adj.set(k, { pos: [x, y, z], next: [] })
+    return k
+  }
+
+  for (const s of segments) {
+    const ka = ensure(s[0]!, s[1]!, s[2]!)
+    const kb = ensure(s[3]!, s[4]!, s[5]!)
+    if (ka === kb) continue
+    adj.get(ka)!.next.push(kb)
+    adj.get(kb)!.next.push(ka)
+  }
+
+  const usedEdge = new Set<string>()
+  const edgeKey = (a: string, b: string): string => (a < b ? `${a}|${b}` : `${b}|${a}`)
+  const polylines: number[][] = []
+
+  const walk = (start: string, prefer?: string): void => {
+    const line: number[] = []
+    let prev: string | null = null
+    let cur = start
+    let preferNext = prefer
+    const pushPos = (k: string): void => {
+      const p = adj.get(k)!.pos
+      line.push(p[0], p[1], p[2])
+    }
+    pushPos(cur)
+
+    while (true) {
+      const node = adj.get(cur)!
+      let nxt: string | null = null
+      if (preferNext && node.next.includes(preferNext) && !usedEdge.has(edgeKey(cur, preferNext))) {
+        nxt = preferNext
+        preferNext = undefined
+      } else {
+        for (const cand of node.next) {
+          if (cand === prev) continue
+          if (usedEdge.has(edgeKey(cur, cand))) continue
+          nxt = cand
+          break
+        }
+      }
+      if (!nxt) break
+      usedEdge.add(edgeKey(cur, nxt))
+      prev = cur
+      cur = nxt
+      pushPos(cur)
+    }
+
+    if (line.length >= 6) polylines.push(line)
+  }
+
+  const keys = [...adj.keys()]
+  for (const k of keys) {
+    if (adj.get(k)!.next.length === 1) {
+      const n = adj.get(k)!.next[0]!
+      if (!usedEdge.has(edgeKey(k, n))) walk(k)
+    }
+  }
+  for (const k of keys) {
+    for (const n of adj.get(k)!.next) {
+      if (!usedEdge.has(edgeKey(k, n))) walk(k, n)
+    }
+  }
+
+  return polylines.length ? polylines : segments
+}
+
+function resolveEndpoints(paths: number[][]): { start: Vector3; end: Vector3 } {
+  const ends: Vector3[] = []
+  for (const p of paths) {
+    ends.push(new Vector3(p[0]!, p[1]!, p[2]!))
+    ends.push(new Vector3(p[p.length - 3]!, p[p.length - 2]!, p[p.length - 1]!))
+  }
+  let start = ends[0]!
+  let end = ends[ends.length - 1]!
+  let far = -1
+  for (let i = 0; i < ends.length; i++) {
+    for (let j = i + 1; j < ends.length; j++) {
+      const d = Vector3.DistanceSquared(ends[i]!, ends[j]!)
+      if (d > far) {
+        far = d
+        start = ends[i]!
+        end = ends[j]!
+      }
+    }
+  }
+  return { start, end }
+}
+
+function orientPathStartToEnd(pts: Vector3[], start: Vector3, end: Vector3): Vector3[] {
+  if (pts.length < 2) return pts
+  const first = pts[0]!
+  const last = pts[pts.length - 1]!
+  const forward =
+    Vector3.DistanceSquared(first, start) + Vector3.DistanceSquared(last, end)
+  const reverse =
+    Vector3.DistanceSquared(last, start) + Vector3.DistanceSquared(first, end)
+  if (reverse < forward) {
+    const copy = pts.slice()
+    copy.reverse()
+    return copy
+  }
+  return pts
+}
+
+function cleanPath(pts: Vector3[], minDist = 0.02): Vector3[] {
+  if (pts.length < 2) return pts
+  const out: Vector3[] = [pts[0]!]
+  for (let i = 1; i < pts.length; i++) {
+    if (Vector3.Distance(pts[i]!, out[out.length - 1]!) >= minDist) out.push(pts[i]!)
+  }
+  if (out.length === 1) out.push(pts[pts.length - 1]!)
+  return out
+}
+
+/** 弧长等距重采样，使 CreateTube 的 V(按点索引) 近似真实距离 */
+function resamplePathEvenly(pts: Vector3[], spacing: number): Vector3[] {
+  const cleaned = cleanPath(pts)
+  if (cleaned.length < 2) return cleaned
+
+  const segLens: number[] = []
+  let total = 0
+  for (let i = 1; i < cleaned.length; i++) {
+    const d = Vector3.Distance(cleaned[i - 1]!, cleaned[i]!)
+    segLens.push(d)
+    total += d
+  }
+  if (total < 1e-4) return cleaned
+
+  const step = Math.max(spacing, total / 80)
+  const count = Math.max(2, Math.ceil(total / step) + 1)
+  const out: Vector3[] = []
+  for (let i = 0; i < count; i++) {
+    const target = (i / (count - 1)) * total
+    let acc = 0
+    for (let s = 0; s < segLens.length; s++) {
+      const next = acc + segLens[s]!
+      if (target <= next || s === segLens.length - 1) {
+        const t = segLens[s]! > 1e-8 ? (target - acc) / segLens[s]! : 0
+        out.push(Vector3.Lerp(cleaned[s]!, cleaned[s + 1]!, Math.min(Math.max(t, 0), 1)))
+        break
+      }
+      acc = next
+    }
+  }
+  return out
+}
+
+/** CreateTube：U 环绕、V 沿路径 0~1 → 乘以管长，使贴图按真实距离均匀重复 */
+function scaleTubeUvByPathLength(tube: Mesh, length: number): void {
+  const uvs = tube.getVerticesData(VertexBuffer.UVKind)
+  if (!uvs?.length) return
+  const len = Math.max(length, 0.01)
+  for (let i = 1; i < uvs.length; i += 2) {
+    uvs[i] = uvs[i]! * len
+  }
+  tube.setVerticesData(VertexBuffer.UVKind, uvs, false)
+}
+
+/** 生成蓝色水流条纹贴图（沿 V 滚动） */
+function createWaterFlowTexture(scene: Scene): DynamicTexture {
+  const w = 128
+  const h = 256
+  const tex = new DynamicTexture('pipeWaterFlowTex', { width: w, height: h }, scene, false)
+  const ctx = tex.getContext()
+
+  for (let y = 0; y < h; y++) {
+    const t = y / h
+    // 深蓝底 + 青色亮带
+    const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 2)
+    const wave2 = 0.5 + 0.5 * Math.sin(t * Math.PI * 4 + 0.8)
+    const foam = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2)), 8)
+    const r = 10 + wave * 30 + foam * 140
+    const g = 70 + wave * 90 + wave2 * 40 + foam * 100
+    const b = 150 + wave * 70 + foam * 50
+    ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`
+    ctx.fillRect(0, y, w, 1)
+  }
+
+  // 环向轻微高光，增加管体立体感
+  const grad = ctx.createLinearGradient(0, 0, w, 0)
+  grad.addColorStop(0, 'rgba(0,0,0,0.25)')
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.12)')
+  grad.addColorStop(0.65, 'rgba(0,0,0,0.05)')
+  grad.addColorStop(1, 'rgba(0,0,0,0.28)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, w, h)
+
+  tex.hasAlpha = false
+  tex.wrapU = Texture.WRAP_ADDRESSMODE
+  tex.wrapV = Texture.WRAP_ADDRESSMODE
+  tex.update()
+  return tex
+}
+
+function createWaterPipeMaterial(scene: Scene, texture: DynamicTexture): StandardMaterial {
+  const mat = new StandardMaterial('pipeWaterMat', scene)
+  // V 为场景距离时：1 / FLOW_BAND_SPACING = 每节水流对应的纹理重复
+  texture.vScale = 1 / FLOW_BAND_SPACING
+  texture.uScale = 1
+  mat.diffuseTexture = texture
+  mat.emissiveTexture = texture
+  mat.emissiveColor = new Color3(0.45, 0.65, 0.95)
+  mat.specularColor = new Color3(0.25, 0.35, 0.45)
+  mat.diffuseColor = new Color3(0.85, 0.9, 1.0)
+  mat.backFaceCulling = true
+  return mat
+}
+
+function createMarker(
+  name: string,
+  position: Vector3,
+  color: Color3,
+  parent: TransformNode | AbstractMesh | null,
+  scene: Scene,
+): Mesh {
+  const box = CreateBox(name, { size: DEBUG_MARKER_SIZE }, scene)
+  const mat = new StandardMaterial(`${name}_mat`, scene)
+  mat.diffuseColor = color
+  mat.emissiveColor = color.scale(0.85)
+  mat.disableLighting = true
+  box.material = mat
+  box.position.copyFrom(position)
+  box.isPickable = false
+  if (parent) box.parent = parent
+  box.setEnabled(false)
+  return box
 }
 
 interface FlowLineEntry {
   lineName: string
-  mesh: GreasedLineBaseMesh
-  material: IGreasedLineMaterial
+  root: TransformNode
+  tubes: Mesh[]
+  startMarker: Mesh
+  endMarker: Mesh
+  segmentCount: number
+  polyCount: number
+  tubeCount: number
 }
 
 export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi | null> {
@@ -227,6 +498,8 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     root.parent = parent
   }
 
+  const waterTex = createWaterFlowTexture(scene)
+  const waterMat = createWaterPipeMaterial(scene, waterTex)
   const entries: FlowLineEntry[] = []
   const expectedNames = WORKING_CONDITION_RULES.map((r) => r.lineName)
 
@@ -262,80 +535,141 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
       continue
     }
     mesh.computeWorldMatrix(true)
-    const paths = extractLinePaths(mesh)
+    const segments = extractLinePaths(mesh)
     mesh.setEnabled(false)
     mesh.isVisible = false
-    if (!paths.length) {
+    if (!segments.length) {
       console.warn(`[pipeFlow] line "${lineName}" has no segments`)
       continue
     }
 
-    const flowMesh = CreateGreasedLine(
-      `flow_${lineName}`,
-      { points: paths },
-      {
-        width: FLOW_LINE_WIDTH,
-        color: FLOW_COLOR,
-        useDash: true,
-        dashCount: 48,
-        dashRatio: 0.45,
-        dashOffset: 0,
-        materialType: GreasedLineMeshMaterialType.MATERIAL_TYPE_SIMPLE,
-      },
-      scene,
-    ) as GreasedLineBaseMesh
+    const paths = stitchPolylines(segments)
+    const { start, end } = resolveEndpoints(paths)
+    const lineParent = (mesh.parent as TransformNode | null) ?? parent
+    const group = new TransformNode(`flow_pipes_${lineName}`, scene)
+    group.parent = lineParent
+    group.setEnabled(false)
 
-    // 与源线条同级，顶点局部坐标一致，并随厂房 pivot 一起变换
-    flowMesh.parent = mesh.parent
-    flowMesh.isPickable = false
-    flowMesh.setEnabled(false)
+    const tubes: Mesh[] = []
+    for (let i = 0; i < paths.length; i++) {
+      let pts = flatToVectors(paths[i]!)
+      if (pts.length < 2) continue
+      pts = orientPathStartToEnd(pts, start, end)
+      pts = resamplePathEvenly(pts, PATH_RESAMPLE_SPACING)
+      const len = pathLength(pts)
+      if (pts.length < 2 || len < 0.05) continue
 
-    const material = asFlowMaterial(flowMesh)
-    if (!material) {
-      console.warn(`[pipeFlow] line "${lineName}" missing greased material`)
-      flowMesh.dispose()
+      try {
+        const tube = CreateTube(
+          `flow_tube_${lineName}_${i}`,
+          {
+            path: pts,
+            radius: PIPE_RADIUS,
+            tessellation: PIPE_TESSELLATION,
+            cap: Mesh.NO_CAP,
+            updatable: false,
+            sideOrientation: Mesh.FRONTSIDE,
+          },
+          scene,
+        )
+        scaleTubeUvByPathLength(tube, len)
+        tube.material = waterMat
+        tube.isPickable = false
+        tube.parent = group
+        tubes.push(tube)
+      } catch (err) {
+        console.warn(`[pipeFlow] tube create failed ${lineName}#${i}`, err)
+      }
+    }
+
+    if (!tubes.length) {
+      console.warn(`[pipeFlow] no tubes for "${lineName}"`)
+      group.dispose()
       continue
     }
 
-    entries.push({ lineName, mesh: flowMesh, material })
+    const startMarker = createMarker(
+      `flow_dbg_start_${lineName}`,
+      start,
+      new Color3(0.1, 1, 0.2),
+      lineParent,
+      scene,
+    )
+    const endMarker = createMarker(
+      `flow_dbg_end_${lineName}`,
+      end,
+      new Color3(1, 0.15, 0.1),
+      lineParent,
+      scene,
+    )
+
+    entries.push({
+      lineName,
+      root: group,
+      tubes,
+      startMarker,
+      endMarker,
+      segmentCount: segments.length,
+      polyCount: paths.length,
+      tubeCount: tubes.length,
+    })
   }
 
   if (!entries.length) {
     console.warn('[pipeFlow] no working-condition lines found in', url)
   } else {
     console.info(
-      `[pipeFlow] lines ready: ${entries.map((e) => e.lineName).join(', ')}`,
+      `[pipeFlow] pipes ready: ${entries
+        .map((e) => `${e.lineName}(tube=${e.tubeCount})`)
+        .join(', ')}`,
     )
   }
 
   let activeName: string | null = null
-  let dashOffset = 0
+  let debugLineOverride: string | null | undefined = undefined
+  let scroll = 0
 
   const setActive = (lineName: string | null): void => {
     if (lineName === activeName) return
     activeName = lineName
     for (const entry of entries) {
-      entry.mesh.setEnabled(entry.lineName === lineName)
+      const on = entry.lineName === lineName
+      entry.root.setEnabled(on)
+      entry.startMarker.setEnabled(on)
+      entry.endMarker.setEnabled(on)
     }
     if (lineName) {
-      console.info(`[pipeFlow] active line=${lineName}`)
+      const hit = entries.find((e) => e.lineName === lineName)
+      console.info(
+        `[pipeFlow] active line=${lineName} tubes=${hit?.tubeCount ?? 0}` +
+          (debugLineOverride !== undefined ? ' (debug)' : ''),
+      )
     } else {
       console.info('[pipeFlow] no matching working condition')
     }
   }
 
   const refreshAll = (): void => {
+    if (debugLineOverride !== undefined) {
+      setActive(debugLineOverride)
+      return
+    }
     setActive(resolveWorkingConditionLineName())
   }
+
+  const setMainModelVisible = (visible: boolean): void => {
+    model.setMainModelVisible(visible)
+    console.info(`[pipeFlow] main model visible=${visible}`)
+  }
+
+  setMainModelVisible(false)
 
   const renderObserver = scene.onBeforeRenderObservable.add(() => {
     if (!activeName) return
     const dt = scene.getEngine().getDeltaTime() * 0.001
-    dashOffset = (dashOffset + FLOW_DASH_SPEED * dt) % 1
-    for (const entry of entries) {
-      if (entry.lineName !== activeName) continue
-      entry.material.dashOffset = dashOffset
-    }
+    // CreateTube V 沿路径：滚动 vOffset → 贴图从起点流向终点
+    scroll = (scroll + FLOW_SCROLL_SPEED * dt) % 1
+    waterTex.vOffset = scroll
   })
 
   refreshAll()
@@ -346,16 +680,37 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     },
     refreshAll,
     getActiveLineName: () => activeName,
+    setDebugLine(lineName) {
+      if (lineName === null) {
+        debugLineOverride = undefined
+        refreshAll()
+        return
+      }
+      if (!entries.some((e) => e.lineName === lineName)) {
+        console.warn(`[pipeFlow] unknown debug line "${lineName}"`)
+        return
+      }
+      debugLineOverride = lineName
+      setActive(lineName)
+    },
+    getLineNames: () => entries.map((e) => e.lineName),
+    setMainModelVisible,
     dispose() {
       scene.onBeforeRenderObservable.remove(renderObserver)
       for (const entry of entries) {
-        entry.mesh.dispose()
+        for (const tube of entry.tubes) tube.dispose()
+        entry.root.dispose()
+        entry.startMarker.dispose()
+        entry.endMarker.dispose()
       }
       entries.length = 0
+      waterMat.dispose()
+      waterTex.dispose()
       container?.removeAllFromScene()
       container?.dispose()
       container = null
       activeName = null
+      debugLineOverride = undefined
     },
   }
 }

@@ -5,10 +5,18 @@ import { AppOrchestrator } from './core/app'
 import { createBusinessFeatures, type BusinessFeaturesGlobal } from './business/features'
 import { createRoofToggleButton } from './ui/roofToggleButton'
 import { startOnMessage } from './message/onMessage'
-import { postOnLoaded, postOnLoading } from './message/postMessage'
+import { postOnLoaded, postOnLoading, postToParent } from './message/postMessage'
 import { createDeviceInteraction } from './business/deviceInteraction'
 import { createDeviceStatusOverlay } from './business/deviceStatusOverlay'
-import { createPipeFlow } from './business/pipeFlow'
+import { createPipeFlow, type PipeFlowApi } from './business/pipeFlow'
+import { MSG_PIPE_FLOW_DEBUG } from './message/types'
+
+function postPipeFlowState(pipeFlow: PipeFlowApi): void {
+  postToParent('pipeFlowDebugState', {
+    lineNames: pipeFlow.getLineNames(),
+    activeLineName: pipeFlow.getActiveLineName(),
+  })
+}
 
 async function bootstrap(): Promise<void> {
   const appRoot = document.querySelector('#app')
@@ -29,7 +37,7 @@ async function bootstrap(): Promise<void> {
 
   // 业务功能：抛出给外部 / 控制台使用
   const business = createBusinessFeatures(app)
-  const g = window as unknown as BusinessFeaturesGlobal
+  const g = window as unknown as BusinessFeaturesGlobal & { __pipeFlow?: PipeFlowApi | null }
   g.__app = app
   g.__business = business
 
@@ -40,6 +48,8 @@ async function bootstrap(): Promise<void> {
   const deviceUi = createDeviceInteraction(app)
   const statusOverlay = createDeviceStatusOverlay(app)
   const pipeFlow = await createPipeFlow(app)
+  g.__pipeFlow = pipeFlow
+
   startOnMessage({
     onModelUpdate(objects) {
       statusOverlay?.applyFromUpdate(objects)
@@ -47,10 +57,22 @@ async function bootstrap(): Promise<void> {
       for (const obj of objects) {
         deviceUi?.panel.refreshIfSame(obj.objectName, obj.metrics || {})
       }
+      if (pipeFlow) postPipeFlowState(pipeFlow)
+    },
+    onPipeFlowDebug(msg) {
+      if (!pipeFlow) return
+      if (msg.action === 'setLine') {
+        pipeFlow.setDebugLine(msg.lineName ?? null)
+      } else if (msg.action === 'setMainModelVisible') {
+        pipeFlow.setMainModelVisible(!!msg.visible)
+      }
+      postPipeFlowState(pipeFlow)
+      console.info(`[message] handled ${MSG_PIPE_FLOW_DEBUG}`, msg)
     },
   })
 
   postOnLoaded()
+  if (pipeFlow) postPipeFlowState(pipeFlow)
 
   window.addEventListener('keydown', (ev) => {
     if (ev.key.toLowerCase() === 'i' && ev.ctrlKey && ev.shiftKey) {

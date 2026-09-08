@@ -13,7 +13,6 @@ export function withBase(path: string): string {
   if (/^(https?:)?\/\//i.test(path) || path.startsWith('data:') || path.startsWith('blob:')) {
     return path
   }
-  debugger;
   const base = getBaseUrl()
   const clean = path.replace(/^\/+/, '')
   return `${base}${clean}`
