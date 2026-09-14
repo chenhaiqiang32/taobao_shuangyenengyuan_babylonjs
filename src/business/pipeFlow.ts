@@ -1,6 +1,7 @@
 /**
- * 工况管线水流：根据 MODEL_UPDATE 判定工况线条，沿路径生成管道 + FlowLight 流光
- * （效果对齐 bl_tongfeng FlowLight2 tube shader）
+ * 工况管线水流：根据 MODEL_UPDATE 判定工况，按 GLB 分组下的主管/支管生成 FlowLight
+ * - 主管：工况开启即流动
+ * - 支管：工况开启 + shebei / shebei_and（串联）/ shebei_or（并联）设备联通
  */
 import '@babylonjs/loaders/glTF'
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
@@ -8,7 +9,6 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { Vector3 } from '@babylonjs/core/Maths/math.vector'
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer'
 import { CreateTube } from '@babylonjs/core/Meshes/Builders/tubeBuilder'
-import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder'
 import { Effect } from '@babylonjs/core/Materials/effect'
 import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
@@ -21,7 +21,7 @@ import type { AssetContainer } from '@babylonjs/core/assetContainer'
 import type { Scene } from '@babylonjs/core/scene'
 import { withBase } from '../config/baseUrl'
 import type { AppOrchestrator } from '../core/app'
-import { getDeviceMetrics } from './deviceMetrics'
+import { getDeviceMetrics, normalizeDeviceName } from './deviceMetrics'
 import type { ModelUpdateObject } from '../message/types'
 
 const LINES_MODEL_URL = '/models/广州双叶厂房_工况Lines.glb'
@@ -48,7 +48,6 @@ const FLOW_OPACITY = 0.4
 /** 亮色 / 暗色（对齐巷道进风流光默认色） */
 const FLOW_COLOR1 = new Color3(0.0235, 0.9647, 0.9333)
 const FLOW_COLOR2 = new Color3(0.0196, 0.3373, 0.4824)
-const DEBUG_MARKER_SIZE = 4
 
 const FLOW_LIGHT_SHADER = 'pipeFlowLight'
 
@@ -127,6 +126,15 @@ export const WORKING_CONDITION_LINE_NAMES = [
   'LHGL联合供冷',
   'BGBX边供边蓄',
 ] as const
+
+/** GLB 最外层分组名 → 工况全名（与 WORKING_CONDITION_RULES.lineName 一致） */
+const CONDITION_GROUPS: { groupName: string; conditionKey: string }[] = [
+  { groupName: 'ZJDDGL', conditionKey: 'ZJDDGL主机单独供冷' },
+  { groupName: 'XSGGL', conditionKey: 'XSGGL蓄水罐供冷' },
+  { groupName: 'ZJXL', conditionKey: 'ZJXL主机蓄冷' },
+  { groupName: 'LHGL', conditionKey: 'LHGL联合供冷' },
+  { groupName: 'BGBX', conditionKey: 'BGBX边供边蓄' },
+]
 
 const WORKING_CONDITION_RULES: WorkingConditionRule[] = [
   {
@@ -221,7 +229,8 @@ function readMetric(metrics: Record<string, string | number>, name: string): num
   return null
 }
 
-function isDeviceOpen(objectName: string, kind: DeviceKind): boolean {
+/** 工况判定用（与 1.xlsx / 历史规则一致） */
+function isDeviceOpenForCondition(objectName: string, kind: DeviceKind): boolean {
   const metrics = getDeviceMetrics(objectName)
   if (!metrics) return false
   if (kind === 'pump') return readMetric(metrics, '运行信号') === 1
@@ -231,18 +240,132 @@ function isDeviceOpen(objectName: string, kind: DeviceKind): boolean {
 }
 
 function passesCheck(check: RuleCheck): boolean {
-  if (check.type === 'open') return isDeviceOpen(check.device, check.kind)
-  if (check.type === 'closed') return !isDeviceOpen(check.device, check.kind)
+  if (check.type === 'open') return isDeviceOpenForCondition(check.device, check.kind)
+  if (check.type === 'closed') return !isDeviceOpenForCondition(check.device, check.kind)
   if (check.type === 'allClosed') {
-    return check.devices.every((name) => !isDeviceOpen(name, check.kind))
+    return check.devices.every((name) => !isDeviceOpenForCondition(name, check.kind))
   }
-  return check.devices.some((name) => isDeviceOpen(name, check.kind))
+  return check.devices.some((name) => isDeviceOpenForCondition(name, check.kind))
 }
 
 export function resolveWorkingConditionLineName(): string | null {
   for (const rule of WORKING_CONDITION_RULES) {
     if (rule.checks.every(passesCheck)) return rule.lineName
   }
+  return null
+}
+
+type BranchMode = 'and' | 'or'
+
+interface BranchBinding {
+  mode: BranchMode
+  devices: string[]
+}
+
+/** 支管绑定设备联通判断（按设备类型字段） */
+function isBoundDeviceConnected(deviceName: string): boolean {
+  const metrics = getDeviceMetrics(deviceName)
+  if (!metrics) return false
+  const name = normalizeDeviceName(deviceName)
+
+  if (/加药装置/.test(name)) {
+    const p1 = readMetric(metrics, '加药泵1运行') ?? 0
+    const p2 = readMetric(metrics, '加药泵2运行') ?? 0
+    return Number(p1) !== 0 || Number(p2) !== 0
+  }
+  if (/开关阀|压差旁通阀/.test(name)) {
+    return readMetric(metrics, '阀门开控制') === 1
+  }
+  if (/卧式风柜|调节阀/.test(name)) {
+    const open = readMetric(metrics, '阀门开度')
+    if (open !== null) return open > 0
+    const feedback = readMetric(metrics, '阀门开度反馈')
+    return feedback !== null && feedback > 0
+  }
+  // 主机 / 冷却泵 / 冷冻泵 / 冷却塔 / 射流风机 / 放冷泵 等
+  if (/主机|冷却泵|冷冻泵|冷却塔|射流风机|放冷泵/.test(name)) {
+    return readMetric(metrics, '启停控制') === 1
+  }
+  return false
+}
+
+function parseDeviceList(raw: string): string[] {
+  return String(raw)
+    .split('/')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function parseBranchBinding(extras: Record<string, unknown> | null | undefined): BranchBinding | null {
+  if (!extras) return null
+  const orRaw = extras.shebei_or
+  if (typeof orRaw === 'string' && orRaw.trim()) {
+    return { mode: 'or', devices: parseDeviceList(orRaw) }
+  }
+  const andRaw = extras.shebei_and ?? extras.shebei
+  if (typeof andRaw === 'string' && andRaw.trim()) {
+    return { mode: 'and', devices: parseDeviceList(andRaw) }
+  }
+  return null
+}
+
+function isBranchBindingConnected(binding: BranchBinding | null): boolean {
+  if (!binding || !binding.devices.length) return false
+  if (binding.mode === 'or') return binding.devices.some(isBoundDeviceConnected)
+  return binding.devices.every(isBoundDeviceConnected)
+}
+
+function getNodeExtras(node: { metadata?: unknown; name?: string }): Record<string, unknown> {
+  const md = node.metadata as Record<string, unknown> | undefined
+  if (!md) return {}
+  if (md.shebei || md.shebei_and || md.shebei_or) return md
+  const gltf = md.gltf as { extras?: Record<string, unknown> } | undefined
+  if (gltf?.extras) return gltf.extras
+  if (md.extras && typeof md.extras === 'object') return md.extras as Record<string, unknown>
+  return md
+}
+
+/** 从 GLB JSON chunk 读取节点 extras（比 runtime metadata 更可靠） */
+async function loadGltfNodeExtrasByName(url: string): Promise<Map<string, Record<string, unknown>>> {
+  const map = new Map<string, Record<string, unknown>>()
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return map
+    const buf = new Uint8Array(await res.arrayBuffer())
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+    const jsonLen = view.getUint32(12, true)
+    const jsonText = new TextDecoder().decode(buf.subarray(20, 20 + jsonLen))
+    const json = JSON.parse(jsonText) as {
+      nodes?: Array<{ name?: string; extras?: Record<string, unknown> }>
+    }
+    for (const node of json.nodes ?? []) {
+      if (!node.name || !node.extras) continue
+      map.set(node.name, node.extras)
+      // Babylon 偶发把 `.` 变成 `_`
+      map.set(node.name.replace(/\./g, '_'), node.extras)
+    }
+  } catch (err) {
+    console.warn('[pipeFlow] failed to parse glTF extras', err)
+  }
+  return map
+}
+
+function resolveLineExtras(
+  mesh: AbstractMesh,
+  extrasByName: Map<string, Record<string, unknown>>,
+): Record<string, unknown> {
+  const fromMeta = getNodeExtras(mesh)
+  if (fromMeta.shebei || fromMeta.shebei_and || fromMeta.shebei_or) return fromMeta
+  const byName =
+    extrasByName.get(mesh.name) ||
+    extrasByName.get(mesh.name.replace(/_/g, '.')) ||
+    extrasByName.get(mesh.name.replace(/\./g, '_'))
+  return byName ?? fromMeta
+}
+
+function classifyLineKind(name: string): 'main' | 'branch' | null {
+  if (name.includes('主管')) return 'main'
+  if (name.includes('支管')) return 'branch'
   return null
 }
 
@@ -268,7 +391,8 @@ function extractLinePaths(mesh: AbstractMesh): number[][] {
 }
 
 function keyPoint(x: number, y: number, z: number): string {
-  return `${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`
+  // 精度过低会把转角两侧点合并，导致折线缺角
+  return `${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`
 }
 
 function flatToVectors(flat: number[]): Vector3[] {
@@ -287,13 +411,18 @@ function pathLength(pts: Vector3[]): number {
   return len
 }
 
+/** 按 line 索引方向（a→b）拼接折线，保持流向 */
 function stitchPolylines(segments: number[][]): number[][] {
   type Pt = [number, number, number]
-  const adj = new Map<string, { pos: Pt; next: string[] }>()
+  const outAdj = new Map<string, { pos: Pt; next: string[] }>()
+  const inDegree = new Map<string, number>()
 
   const ensure = (x: number, y: number, z: number): string => {
     const k = keyPoint(x, y, z)
-    if (!adj.has(k)) adj.set(k, { pos: [x, y, z], next: [] })
+    if (!outAdj.has(k)) {
+      outAdj.set(k, { pos: [x, y, z], next: [] })
+      inDegree.set(k, 0)
+    }
     return k
   }
 
@@ -301,42 +430,33 @@ function stitchPolylines(segments: number[][]): number[][] {
     const ka = ensure(s[0]!, s[1]!, s[2]!)
     const kb = ensure(s[3]!, s[4]!, s[5]!)
     if (ka === kb) continue
-    adj.get(ka)!.next.push(kb)
-    adj.get(kb)!.next.push(ka)
+    outAdj.get(ka)!.next.push(kb)
+    inDegree.set(kb, (inDegree.get(kb) ?? 0) + 1)
   }
 
   const usedEdge = new Set<string>()
-  const edgeKey = (a: string, b: string): string => (a < b ? `${a}|${b}` : `${b}|${a}`)
+  const edgeKey = (a: string, b: string): string => `${a}>${b}`
   const polylines: number[][] = []
 
-  const walk = (start: string, prefer?: string): void => {
+  const walk = (start: string): void => {
     const line: number[] = []
-    let prev: string | null = null
     let cur = start
-    let preferNext = prefer
     const pushPos = (k: string): void => {
-      const p = adj.get(k)!.pos
+      const p = outAdj.get(k)!.pos
       line.push(p[0], p[1], p[2])
     }
     pushPos(cur)
 
     while (true) {
-      const node = adj.get(cur)!
+      const node = outAdj.get(cur)!
       let nxt: string | null = null
-      if (preferNext && node.next.includes(preferNext) && !usedEdge.has(edgeKey(cur, preferNext))) {
-        nxt = preferNext
-        preferNext = undefined
-      } else {
-        for (const cand of node.next) {
-          if (cand === prev) continue
-          if (usedEdge.has(edgeKey(cur, cand))) continue
-          nxt = cand
-          break
-        }
+      for (const cand of node.next) {
+        if (usedEdge.has(edgeKey(cur, cand))) continue
+        nxt = cand
+        break
       }
       if (!nxt) break
       usedEdge.add(edgeKey(cur, nxt))
-      prev = cur
       cur = nxt
       pushPos(cur)
     }
@@ -344,61 +464,22 @@ function stitchPolylines(segments: number[][]): number[][] {
     if (line.length >= 6) polylines.push(line)
   }
 
-  const keys = [...adj.keys()]
+  const keys = [...outAdj.keys()]
   for (const k of keys) {
-    if (adj.get(k)!.next.length === 1) {
-      const n = adj.get(k)!.next[0]!
-      if (!usedEdge.has(edgeKey(k, n))) walk(k)
+    if ((inDegree.get(k) ?? 0) === 0 && outAdj.get(k)!.next.some((n) => !usedEdge.has(edgeKey(k, n)))) {
+      walk(k)
     }
   }
   for (const k of keys) {
-    for (const n of adj.get(k)!.next) {
-      if (!usedEdge.has(edgeKey(k, n))) walk(k, n)
+    for (const n of outAdj.get(k)!.next) {
+      if (!usedEdge.has(edgeKey(k, n))) walk(k)
     }
   }
 
   return polylines.length ? polylines : segments
 }
 
-function resolveEndpoints(paths: number[][]): { start: Vector3; end: Vector3 } {
-  const ends: Vector3[] = []
-  for (const p of paths) {
-    ends.push(new Vector3(p[0]!, p[1]!, p[2]!))
-    ends.push(new Vector3(p[p.length - 3]!, p[p.length - 2]!, p[p.length - 1]!))
-  }
-  let start = ends[0]!
-  let end = ends[ends.length - 1]!
-  let far = -1
-  for (let i = 0; i < ends.length; i++) {
-    for (let j = i + 1; j < ends.length; j++) {
-      const d = Vector3.DistanceSquared(ends[i]!, ends[j]!)
-      if (d > far) {
-        far = d
-        start = ends[i]!
-        end = ends[j]!
-      }
-    }
-  }
-  return { start, end }
-}
-
-function orientPathStartToEnd(pts: Vector3[], start: Vector3, end: Vector3): Vector3[] {
-  if (pts.length < 2) return pts
-  const first = pts[0]!
-  const last = pts[pts.length - 1]!
-  const forward =
-    Vector3.DistanceSquared(first, start) + Vector3.DistanceSquared(last, end)
-  const reverse =
-    Vector3.DistanceSquared(last, start) + Vector3.DistanceSquared(first, end)
-  if (reverse < forward) {
-    const copy = pts.slice()
-    copy.reverse()
-    return copy
-  }
-  return pts
-}
-
-function cleanPath(pts: Vector3[], minDist = 0.02): Vector3[] {
+function cleanPath(pts: Vector3[], minDist = 0.001): Vector3[] {
   if (pts.length < 2) return pts
   const out: Vector3[] = [pts[0]!]
   for (let i = 1; i < pts.length; i++) {
@@ -408,36 +489,29 @@ function cleanPath(pts: Vector3[], minDist = 0.02): Vector3[] {
   return out
 }
 
-/** 弧长等距重采样，使 CreateTube 的 V(按点索引) 近似真实距离 */
+/**
+ * 沿折线分段加密：必须保留所有原顶点（尤其是直角转角），
+ * 只在相邻两点之间按 spacing 插点，避免弧长全局重采样切角。
+ */
 function resamplePathEvenly(pts: Vector3[], spacing: number): Vector3[] {
   const cleaned = cleanPath(pts)
   if (cleaned.length < 2) return cleaned
 
-  const segLens: number[] = []
-  let total = 0
-  for (let i = 1; i < cleaned.length; i++) {
-    const d = Vector3.Distance(cleaned[i - 1]!, cleaned[i]!)
-    segLens.push(d)
-    total += d
-  }
-  if (total < 1e-4) return cleaned
+  const step = Math.max(spacing, 1e-4)
+  const out: Vector3[] = [cleaned[0]!.clone()]
 
-  const step = Math.max(spacing, total / 80)
-  const count = Math.max(2, Math.ceil(total / step) + 1)
-  const out: Vector3[] = []
-  for (let i = 0; i < count; i++) {
-    const target = (i / (count - 1)) * total
-    let acc = 0
-    for (let s = 0; s < segLens.length; s++) {
-      const next = acc + segLens[s]!
-      if (target <= next || s === segLens.length - 1) {
-        const t = segLens[s]! > 1e-8 ? (target - acc) / segLens[s]! : 0
-        out.push(Vector3.Lerp(cleaned[s]!, cleaned[s + 1]!, Math.min(Math.max(t, 0), 1)))
-        break
-      }
-      acc = next
+  for (let i = 1; i < cleaned.length; i++) {
+    const a = cleaned[i - 1]!
+    const b = cleaned[i]!
+    const dist = Vector3.Distance(a, b)
+    if (dist < 1e-8) continue
+    const divisions = Math.max(1, Math.ceil(dist / step))
+    for (let d = 1; d < divisions; d++) {
+      out.push(Vector3.Lerp(a, b, d / divisions))
     }
+    out.push(b.clone())
   }
+
   return out
 }
 
@@ -515,37 +589,111 @@ function bindFlowDepthTestOff(mesh: Mesh): void {
   })
 }
 
-function createMarker(
-  name: string,
-  position: Vector3,
-  color: Color3,
-  parent: TransformNode | AbstractMesh | null,
-  scene: Scene,
-): Mesh {
-  const box = CreateBox(name, { size: DEBUG_MARKER_SIZE }, scene)
-  const mat = new StandardMaterial(`${name}_mat`, scene)
-  mat.diffuseColor = color
-  mat.emissiveColor = color.scale(0.85)
-  mat.disableLighting = true
-  box.material = mat
-  box.position.copyFrom(position)
-  box.isPickable = false
-  if (parent) box.parent = parent
-  box.setEnabled(false)
-  return box
-}
-
-interface FlowLineEntry {
-  lineName: string
+interface FlowSegment {
+  id: string
+  conditionKey: string
+  kind: 'main' | 'branch'
+  binding: BranchBinding | null
   root: TransformNode
   baseTubes: Mesh[]
   flowTubes: Mesh[]
   flowMats: ShaderMaterial[]
-  startMarker: Mesh
-  endMarker: Mesh
-  segmentCount: number
-  polyCount: number
-  tubeCount: number
+}
+
+function buildTubesForPath(
+  scene: Scene,
+  parent: TransformNode,
+  id: string,
+  ptsIn: Vector3[],
+  baseMat: StandardMaterial,
+): { baseTubes: Mesh[]; flowTubes: Mesh[]; flowMats: ShaderMaterial[] } | null {
+  // 保持 line 顶点顺序，流向与线段方向一致
+  const pts = resamplePathEvenly(ptsIn, PATH_RESAMPLE_SPACING)
+  const len = pathLength(pts)
+  if (pts.length < 2 || len < 0.05) return null
+
+  const baseTubes: Mesh[] = []
+  const flowTubes: Mesh[] = []
+  const flowMats: ShaderMaterial[] = []
+  const bandCount = len / FLOW_SEGMENT_SPACING
+
+  try {
+    const baseTube = CreateTube(
+      `flow_base_${id}`,
+      {
+        path: pts,
+        radius: PIPE_RADIUS,
+        tessellation: PIPE_TESSELLATION,
+        cap: Mesh.NO_CAP,
+        updatable: false,
+        sideOrientation: Mesh.FRONTSIDE,
+      },
+      scene,
+    )
+    baseTube.material = baseMat
+    baseTube.isPickable = false
+    baseTube.parent = parent
+    baseTubes.push(baseTube)
+
+    const flowMat = createFlowLightMaterial(scene, `flow_light_mat_${id}`, bandCount, {
+      opacity: 1,
+      glowBoost: 0.9,
+      additive: false,
+    })
+    const flowTube = CreateTube(
+      `flow_light_${id}`,
+      {
+        path: pts,
+        radius: PIPE_RADIUS * FLOW_RADIUS_SCALE,
+        tessellation: PIPE_TESSELLATION,
+        cap: Mesh.NO_CAP,
+        updatable: false,
+        sideOrientation: Mesh.DOUBLESIDE,
+      },
+      scene,
+    )
+    bakeTubeUvByArcLength(flowTube, len, FLOW_SEGMENT_SPACING)
+    flowTube.material = flowMat
+    flowTube.isPickable = false
+    flowTube.parent = parent
+    flowTube.alphaIndex = 1
+    bindFlowDepthTestOff(flowTube)
+    flowTubes.push(flowTube)
+    flowMats.push(flowMat)
+
+    const glowMat = createFlowLightMaterial(scene, `flow_glow_mat_${id}`, bandCount, {
+      opacity: 0.45,
+      glowBoost: 1.6,
+      additive: true,
+    })
+    const glowTube = CreateTube(
+      `flow_glow_${id}`,
+      {
+        path: pts,
+        radius: PIPE_RADIUS * FLOW_GLOW_RADIUS_SCALE,
+        tessellation: PIPE_TESSELLATION,
+        cap: Mesh.NO_CAP,
+        updatable: false,
+        sideOrientation: Mesh.DOUBLESIDE,
+      },
+      scene,
+    )
+    bakeTubeUvByArcLength(glowTube, len, FLOW_SEGMENT_SPACING)
+    glowTube.material = glowMat
+    glowTube.isPickable = false
+    glowTube.parent = parent
+    glowTube.alphaIndex = 2
+    bindFlowDepthTestOff(glowTube)
+    flowTubes.push(glowTube)
+    flowMats.push(glowMat)
+  } catch (err) {
+    console.warn(`[pipeFlow] tube create failed ${id}`, err)
+    for (const m of flowMats) m.dispose()
+    for (const t of [...baseTubes, ...flowTubes]) t.dispose()
+    return null
+  }
+
+  return { baseTubes, flowTubes, flowMats }
 }
 
 export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi | null> {
@@ -571,212 +719,155 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     root.parent = parent
   }
 
+  const extrasByName = await loadGltfNodeExtrasByName(url)
   const baseMat = createPipeBaseMaterial(scene)
-  const entries: FlowLineEntry[] = []
-  const expectedNames = WORKING_CONDITION_RULES.map((r) => r.lineName)
+  const segments: FlowSegment[] = []
 
-  const findLineMesh = (lineName: string): AbstractMesh | null => {
-    for (const mesh of container!.meshes) {
-      if (mesh.name === lineName) return mesh
-    }
+  const findGroupNode = (groupName: string): TransformNode | null => {
     for (const node of container!.rootNodes) {
-      const stack = [node]
+      const stack: TransformNode[] = [node as TransformNode]
       while (stack.length) {
         const cur = stack.pop()!
-        if (cur.name === lineName) {
-          if ('getTotalVertices' in cur) {
-            const m = cur as AbstractMesh
-            if (typeof m.getTotalVertices === 'function' && m.getTotalVertices() > 0) return m
-          }
-          if ('getChildMeshes' in cur && typeof (cur as TransformNode).getChildMeshes === 'function') {
-            const children = (cur as TransformNode).getChildMeshes(false)
-            const withVerts = children.find((c) => c.getTotalVertices() > 0)
-            if (withVerts) return withVerts
-          }
+        if (cur.name === groupName) return cur
+        for (const child of cur.getChildren()) {
+          if (child instanceof TransformNode) stack.push(child)
         }
-        for (const child of cur.getChildren()) stack.push(child)
       }
     }
     return null
   }
 
-  for (const lineName of expectedNames) {
-    const mesh = findLineMesh(lineName)
-    if (!mesh) {
-      console.warn(`[pipeFlow] line node "${lineName}" not found`)
-      continue
-    }
-    mesh.computeWorldMatrix(true)
-    const segments = extractLinePaths(mesh)
-    mesh.setEnabled(false)
-    mesh.isVisible = false
-    if (!segments.length) {
-      console.warn(`[pipeFlow] line "${lineName}" has no segments`)
-      continue
-    }
-
-    const paths = stitchPolylines(segments)
-    const { start, end } = resolveEndpoints(paths)
-    const lineParent = (mesh.parent as TransformNode | null) ?? parent
-    const group = new TransformNode(`flow_pipes_${lineName}`, scene)
-    group.parent = lineParent
-    group.setEnabled(false)
-
-    const baseTubes: Mesh[] = []
-    const flowTubes: Mesh[] = []
-    const flowMats: ShaderMaterial[] = []
-    for (let i = 0; i < paths.length; i++) {
-      let pts = flatToVectors(paths[i]!)
-      if (pts.length < 2) continue
-      pts = orientPathStartToEnd(pts, start, end)
-      pts = resamplePathEvenly(pts, PATH_RESAMPLE_SPACING)
-      const len = pathLength(pts)
-      if (pts.length < 2 || len < 0.05) continue
-
-      try {
-        const bandCount = len / FLOW_SEGMENT_SPACING
-        const baseTube = CreateTube(
-          `flow_base_${lineName}_${i}`,
-          {
-            path: pts,
-            radius: PIPE_RADIUS,
-            tessellation: PIPE_TESSELLATION,
-            cap: Mesh.NO_CAP,
-            updatable: false,
-            sideOrientation: Mesh.FRONTSIDE,
-          },
-          scene,
-        )
-        baseTube.material = baseMat
-        baseTube.isPickable = false
-        baseTube.parent = group
-        baseTubes.push(baseTube)
-
-        const flowMat = createFlowLightMaterial(scene, `flow_light_mat_${lineName}_${i}`, bandCount, {
-          opacity: 1,
-          glowBoost: 0.9,
-          additive: false,
-        })
-        const flowTube = CreateTube(
-          `flow_light_${lineName}_${i}`,
-          {
-            path: pts,
-            radius: PIPE_RADIUS * FLOW_RADIUS_SCALE,
-            tessellation: PIPE_TESSELLATION,
-            cap: Mesh.NO_CAP,
-            updatable: false,
-            sideOrientation: Mesh.DOUBLESIDE,
-          },
-          scene,
-        )
-        bakeTubeUvByArcLength(flowTube, len, FLOW_SEGMENT_SPACING)
-        flowTube.material = flowMat
-        flowTube.isPickable = false
-        flowTube.parent = group
-        flowTube.alphaIndex = 1
-        bindFlowDepthTestOff(flowTube)
-        flowTubes.push(flowTube)
-        flowMats.push(flowMat)
-
-        // 外层加法柔光，近似原项目 SelectiveBloom
-        const glowMat = createFlowLightMaterial(scene, `flow_glow_mat_${lineName}_${i}`, bandCount, {
-          opacity: 0.45,
-          glowBoost: 1.6,
-          additive: true,
-        })
-        const glowTube = CreateTube(
-          `flow_glow_${lineName}_${i}`,
-          {
-            path: pts,
-            radius: PIPE_RADIUS * FLOW_GLOW_RADIUS_SCALE,
-            tessellation: PIPE_TESSELLATION,
-            cap: Mesh.NO_CAP,
-            updatable: false,
-            sideOrientation: Mesh.DOUBLESIDE,
-          },
-          scene,
-        )
-        bakeTubeUvByArcLength(glowTube, len, FLOW_SEGMENT_SPACING)
-        glowTube.material = glowMat
-        glowTube.isPickable = false
-        glowTube.parent = group
-        glowTube.alphaIndex = 2
-        bindFlowDepthTestOff(glowTube)
-        flowTubes.push(glowTube)
-        flowMats.push(glowMat)
-      } catch (err) {
-        console.warn(`[pipeFlow] tube create failed ${lineName}#${i}`, err)
+  const collectLineMeshes = (groupNode: TransformNode): AbstractMesh[] => {
+    const out: AbstractMesh[] = []
+    for (const child of groupNode.getChildren()) {
+      if (child instanceof Mesh || (child as AbstractMesh).getTotalVertices) {
+        const m = child as AbstractMesh
+        if (typeof m.getTotalVertices === 'function' && m.getTotalVertices() > 0) {
+          out.push(m)
+          continue
+        }
+      }
+      if (child instanceof TransformNode) {
+        for (const n of child.getChildMeshes(false)) {
+          if (n.getTotalVertices() > 0) out.push(n)
+        }
       }
     }
+    return out
+  }
 
-    if (!baseTubes.length) {
-      console.warn(`[pipeFlow] no tubes for "${lineName}"`)
-      for (const mat of flowMats) mat.dispose()
-      group.dispose()
+  for (const { groupName, conditionKey } of CONDITION_GROUPS) {
+    const groupNode = findGroupNode(groupName)
+    if (!groupNode) {
+      console.warn(`[pipeFlow] condition group "${groupName}" not found`)
       continue
     }
 
-    const startMarker = createMarker(
-      `flow_dbg_start_${lineName}`,
-      start,
-      new Color3(0.1, 1, 0.2),
-      lineParent,
-      scene,
-    )
-    const endMarker = createMarker(
-      `flow_dbg_end_${lineName}`,
-      end,
-      new Color3(1, 0.15, 0.1),
-      lineParent,
-      scene,
-    )
+    const lineMeshes = collectLineMeshes(groupNode)
+    let mainCount = 0
+    let branchCount = 0
 
-    entries.push({
-      lineName,
-      root: group,
-      baseTubes,
-      flowTubes,
-      flowMats,
-      startMarker,
-      endMarker,
-      segmentCount: segments.length,
-      polyCount: paths.length,
-      tubeCount: baseTubes.length,
-    })
+    for (let li = 0; li < lineMeshes.length; li++) {
+      const mesh = lineMeshes[li]!
+      const kind = classifyLineKind(mesh.name)
+      if (!kind) {
+        mesh.setEnabled(false)
+        mesh.isVisible = false
+        continue
+      }
+
+      mesh.computeWorldMatrix(true)
+      const rawSegments = extractLinePaths(mesh)
+      mesh.setEnabled(false)
+      mesh.isVisible = false
+      if (!rawSegments.length) {
+        console.warn(`[pipeFlow] line "${mesh.name}" has no segments`)
+        continue
+      }
+
+      const extras = resolveLineExtras(mesh, extrasByName)
+      const binding = kind === 'branch' ? parseBranchBinding(extras) : null
+      if (kind === 'branch' && !binding) {
+        console.warn(`[pipeFlow] branch "${mesh.name}" missing shebei/shebei_and/shebei_or`)
+      }
+
+      const paths = stitchPolylines(rawSegments)
+      const lineParent = (mesh.parent as TransformNode | null) ?? groupNode
+      const segRoot = new TransformNode(`flow_seg_${mesh.name}`, scene)
+      segRoot.parent = lineParent
+      segRoot.setEnabled(false)
+
+      const baseTubes: Mesh[] = []
+      const flowTubes: Mesh[] = []
+      const flowMats: ShaderMaterial[] = []
+
+      for (let pi = 0; pi < paths.length; pi++) {
+        const pts = flatToVectors(paths[pi]!)
+        if (pts.length < 2) continue
+        const built = buildTubesForPath(scene, segRoot, `${mesh.name}_${pi}`, pts, baseMat)
+        if (!built) continue
+        baseTubes.push(...built.baseTubes)
+        flowTubes.push(...built.flowTubes)
+        flowMats.push(...built.flowMats)
+      }
+
+      if (!baseTubes.length) {
+        segRoot.dispose()
+        continue
+      }
+
+      segments.push({
+        id: mesh.name,
+        conditionKey,
+        kind,
+        binding,
+        root: segRoot,
+        baseTubes,
+        flowTubes,
+        flowMats,
+      })
+      if (kind === 'main') mainCount++
+      else branchCount++
+    }
+
+    console.info(
+      `[pipeFlow] group ${groupName} (${conditionKey}): main=${mainCount} branch=${branchCount}`,
+    )
   }
 
-  if (!entries.length) {
+  if (!segments.length) {
     console.warn('[pipeFlow] no working-condition lines found in', url)
   } else {
-    console.info(
-      `[pipeFlow] pipes ready: ${entries
-        .map((e) => `${e.lineName}(tube=${e.tubeCount})`)
-        .join(', ')}`,
-    )
+    console.info(`[pipeFlow] segments ready: ${segments.length}`)
   }
 
   let activeName: string | null = null
   let debugLineOverride: string | null | undefined = undefined
   let elapseTime = 0
 
-  const setActive = (lineName: string | null): void => {
-    if (lineName === activeName) return
-    activeName = lineName
-    // 切换工况时重置时间，复现 FlowLight 沿路径逐渐显现
-    elapseTime = 0
-    for (const entry of entries) {
-      const on = entry.lineName === lineName
-      entry.root.setEnabled(on)
-      entry.startMarker.setEnabled(on)
-      entry.endMarker.setEnabled(on)
+  const shouldSegmentFlow = (seg: FlowSegment, conditionKey: string | null): boolean => {
+    if (!conditionKey || seg.conditionKey !== conditionKey) return false
+    if (seg.kind === 'main') return true
+    return isBranchBindingConnected(seg.binding)
+  }
+
+  const applyVisibility = (conditionKey: string | null, resetTime: boolean): void => {
+    activeName = conditionKey
+    if (resetTime) elapseTime = 0
+    let onCount = 0
+    for (const seg of segments) {
+      const on = shouldSegmentFlow(seg, conditionKey)
+      seg.root.setEnabled(on)
       if (on) {
-        for (const mat of entry.flowMats) mat.setFloat('uElapseTime', 0)
+        onCount++
+        if (resetTime) {
+          for (const mat of seg.flowMats) mat.setFloat('uElapseTime', 0)
+        }
       }
     }
-    if (lineName) {
-      const hit = entries.find((e) => e.lineName === lineName)
+    if (conditionKey) {
       console.info(
-        `[pipeFlow] active line=${lineName} tubes=${hit?.tubeCount ?? 0}` +
+        `[pipeFlow] active=${conditionKey} flowing=${onCount}/${segments.filter((s) => s.conditionKey === conditionKey).length}` +
           (debugLineOverride !== undefined ? ' (debug)' : ''),
       )
     } else {
@@ -786,10 +877,11 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
 
   const refreshAll = (): void => {
     if (debugLineOverride !== undefined) {
-      setActive(debugLineOverride)
+      applyVisibility(debugLineOverride, debugLineOverride !== activeName)
       return
     }
-    setActive(resolveWorkingConditionLineName())
+    const next = resolveWorkingConditionLineName()
+    applyVisibility(next, next !== activeName)
   }
 
   const setMainModelVisible = (visible: boolean): void => {
@@ -797,16 +889,13 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     console.info(`[pipeFlow] main model visible=${visible}`)
   }
 
-  setMainModelVisible(false)
-
   const renderObserver = scene.onBeforeRenderObservable.add(() => {
     if (!activeName) return
     const dt = scene.getEngine().getDeltaTime() * 0.001
     elapseTime += dt
-    const active = entries.find((e) => e.lineName === activeName)
-    if (!active) return
-    for (const mat of active.flowMats) {
-      mat.setFloat('uElapseTime', elapseTime)
+    for (const seg of segments) {
+      if (!seg.root.isEnabled()) continue
+      for (const mat of seg.flowMats) mat.setFloat('uElapseTime', elapseTime)
     }
   })
 
@@ -824,26 +913,24 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
         refreshAll()
         return
       }
-      if (!entries.some((e) => e.lineName === lineName)) {
+      if (!CONDITION_GROUPS.some((g) => g.conditionKey === lineName)) {
         console.warn(`[pipeFlow] unknown debug line "${lineName}"`)
         return
       }
       debugLineOverride = lineName
-      setActive(lineName)
+      applyVisibility(lineName, true)
     },
-    getLineNames: () => entries.map((e) => e.lineName),
+    getLineNames: () => CONDITION_GROUPS.map((g) => g.conditionKey),
     setMainModelVisible,
     dispose() {
       scene.onBeforeRenderObservable.remove(renderObserver)
-      for (const entry of entries) {
-        for (const tube of entry.baseTubes) tube.dispose()
-        for (const tube of entry.flowTubes) tube.dispose()
-        for (const mat of entry.flowMats) mat.dispose()
-        entry.root.dispose()
-        entry.startMarker.dispose()
-        entry.endMarker.dispose()
+      for (const seg of segments) {
+        for (const tube of seg.baseTubes) tube.dispose()
+        for (const tube of seg.flowTubes) tube.dispose()
+        for (const mat of seg.flowMats) mat.dispose()
+        seg.root.dispose()
       }
-      entries.length = 0
+      segments.length = 0
       baseMat.dispose()
       container?.removeAllFromScene()
       container?.dispose()

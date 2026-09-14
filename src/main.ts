@@ -41,14 +41,18 @@ async function bootstrap(): Promise<void> {
   g.__app = app
   g.__business = business
 
-  // 右上角业务工具条：屋顶显隐 + 视角切换
-  createRoofToggleButton(business)
+  // 右上角业务工具条：当前工况 + 屋顶显隐 + 视角切换
+  const toolbar = createRoofToggleButton(business)
 
   // 设备点击信息牌 + 父页面 MODEL_UPDATE
   const deviceUi = createDeviceInteraction(app)
   const statusOverlay = createDeviceStatusOverlay(app)
   const pipeFlow = await createPipeFlow(app)
   g.__pipeFlow = pipeFlow
+
+  const syncWorkingConditionLabel = (): void => {
+    toolbar.setWorkingCondition(pipeFlow?.getActiveLineName() ?? null)
+  }
 
   startOnMessage({
     onModelUpdate(objects) {
@@ -57,6 +61,7 @@ async function bootstrap(): Promise<void> {
       for (const obj of objects) {
         deviceUi?.panel.refreshIfSame(obj.objectName, obj.metrics || {})
       }
+      syncWorkingConditionLabel()
       if (pipeFlow) postPipeFlowState(pipeFlow)
     },
     onPipeFlowDebug(msg) {
@@ -66,12 +71,14 @@ async function bootstrap(): Promise<void> {
       } else if (msg.action === 'setMainModelVisible') {
         pipeFlow.setMainModelVisible(!!msg.visible)
       }
+      syncWorkingConditionLabel()
       postPipeFlowState(pipeFlow)
       console.info(`[message] handled ${MSG_PIPE_FLOW_DEBUG}`, msg)
     },
   })
 
   postOnLoaded()
+  syncWorkingConditionLabel()
   if (pipeFlow) postPipeFlowState(pipeFlow)
 
   window.addEventListener('keydown', (ev) => {
