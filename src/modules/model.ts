@@ -132,8 +132,10 @@ export class ModelModule implements SceneModule<ModelConfig> {
    * 将模型内动画组同步写入配置：
    * - 已有同名条目保留 play/loop/speedRatio
    * - 新条目按 playAnimationsByDefault 初始化（本项目默认全部播放）
+   * - 冷却塔扇叶由 MODEL_UPDATE 运行信号驱动，初始默认关闭
    */
   private syncAnimationsToConfig(config: ModelConfig): void {
+    const runtimeDriven = new Set(['扇叶Action', '扇叶.001Action'])
     const prevByName = new Map(config.animations.map((a) => [a.name, a]))
     const next: ModelAnimationConfig[] = this.animationGroups.map((group) => {
       const prev = prevByName.get(group.name)
@@ -147,7 +149,7 @@ export class ModelModule implements SceneModule<ModelConfig> {
       }
       return {
         name: group.name,
-        play: config.playAnimationsByDefault,
+        play: runtimeDriven.has(group.name) ? false : config.playAnimationsByDefault,
         loop: true,
         speedRatio: 1,
       }
@@ -185,6 +187,39 @@ export class ModelModule implements SceneModule<ModelConfig> {
         group.stop()
       }
     }
+  }
+
+  /** 按动画组名称启停（同步写入 model.animations 配置） */
+  setAnimationPlaying(name: string, play: boolean, loop = true): boolean {
+    const group = this.animationGroups.find((g) => g.name === name)
+    if (!group) {
+      console.warn(`[model] animation group not found: "${name}"`)
+      return false
+    }
+
+    const config = this.ctx?.config.model
+    if (config) {
+      let entry = config.animations.find((a) => a.name === name)
+      if (!entry) {
+        entry = { name, play, loop, speedRatio: 1 }
+        config.animations.push(entry)
+      } else {
+        entry.play = play
+        entry.loop = loop
+      }
+    }
+
+    group.speedRatio = 1
+    if (play) {
+      if (!group.isPlaying) {
+        group.start(loop, 1)
+      } else {
+        group.loopAnimation = loop
+      }
+    } else if (group.isPlaying) {
+      group.stop()
+    }
+    return true
   }
 
   playAllAnimations(loop = true): void {

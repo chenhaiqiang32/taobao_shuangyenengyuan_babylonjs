@@ -565,6 +565,7 @@ function createFlowLightMaterial(
     },
   )
   mat.backFaceCulling = false
+  // 保留深度测试，避免流光穿过厂房模型；透明物体不写深度以免互相遮挡异常
   mat.disableDepthWrite = true
   mat.transparencyMode = Material.MATERIAL_ALPHABLEND
   mat.alphaMode = options?.additive ? Constants.ALPHA_ADD : Constants.ALPHA_COMBINE
@@ -576,17 +577,6 @@ function createFlowLightMaterial(
   mat.setFloat('uSpeed', FLOW_SPEED)
   mat.setFloat('uGlowBoost', options?.glowBoost ?? 0.85)
   return mat
-}
-
-/** 对齐原版 depthTest:false：绘制流光时关闭深度测试 */
-function bindFlowDepthTestOff(mesh: Mesh): void {
-  const engine = mesh.getScene().getEngine()
-  mesh.onBeforeRenderObservable.add(() => {
-    engine.setDepthBuffer(false)
-  })
-  mesh.onAfterRenderObservable.add(() => {
-    engine.setDepthBuffer(true)
-  })
 }
 
 interface FlowSegment {
@@ -657,7 +647,6 @@ function buildTubesForPath(
     flowTube.isPickable = false
     flowTube.parent = parent
     flowTube.alphaIndex = 1
-    bindFlowDepthTestOff(flowTube)
     flowTubes.push(flowTube)
     flowMats.push(flowMat)
 
@@ -683,7 +672,6 @@ function buildTubesForPath(
     glowTube.isPickable = false
     glowTube.parent = parent
     glowTube.alphaIndex = 2
-    bindFlowDepthTestOff(glowTube)
     flowTubes.push(glowTube)
     flowMats.push(glowMat)
   } catch (err) {

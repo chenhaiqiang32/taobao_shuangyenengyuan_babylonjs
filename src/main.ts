@@ -9,6 +9,7 @@ import { postOnLoaded, postOnLoading, postToParent } from './message/postMessage
 import { createDeviceInteraction } from './business/deviceInteraction'
 import { createDeviceStatusOverlay } from './business/deviceStatusOverlay'
 import { createPipeFlow, type PipeFlowApi } from './business/pipeFlow'
+import { resetCoolingTowerFans, syncCoolingTowerFans } from './business/coolingTowerFan'
 import { MSG_PIPE_FLOW_DEBUG } from './message/types'
 
 function postPipeFlowState(pipeFlow: PipeFlowApi): void {
@@ -50,6 +51,9 @@ async function bootstrap(): Promise<void> {
   const pipeFlow = await createPipeFlow(app)
   g.__pipeFlow = pipeFlow
 
+  // 冷却塔扇叶：默认关闭，由 MODEL_UPDATE 运行信号驱动
+  resetCoolingTowerFans(app)
+
   const syncWorkingConditionLabel = (): void => {
     toolbar.setWorkingCondition(pipeFlow?.getActiveLineName() ?? null)
   }
@@ -58,6 +62,7 @@ async function bootstrap(): Promise<void> {
     onModelUpdate(objects) {
       statusOverlay?.applyFromUpdate(objects)
       pipeFlow?.applyFromUpdate(objects)
+      syncCoolingTowerFans(app)
       for (const obj of objects) {
         deviceUi?.panel.refreshIfSame(obj.objectName, obj.metrics || {})
       }

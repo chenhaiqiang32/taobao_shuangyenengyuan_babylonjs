@@ -168,6 +168,7 @@
           log('← onLoading')
         } else if (data.cmd === 'web3dDeviceClick') {
           log(`← web3dDeviceClick ${JSON.stringify(data.param)}`)
+          console.log('web3dDeviceClick', data.param)
         } else if (data.cmd === 'web3dDevicePanelClose') {
           log(`← web3dDevicePanelClose ${JSON.stringify(data.param)}`)
         } else if (data.cmd === 'pipeFlowDebugState') {

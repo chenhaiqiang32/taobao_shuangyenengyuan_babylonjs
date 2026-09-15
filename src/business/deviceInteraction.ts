@@ -69,7 +69,8 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
     const metrics = getDeviceMetrics(entry.objectName) ?? {}
     const title = formatDeviceDisplayName(entry.objectName)
     panel.show(entry.objectName, title, metrics, entry.node)
-    postDeviceClick({ objectName: entry.objectName, metrics })
+    // 通知父页面用模型原始名称（保留尾部 _），内部索引仍用规范化名
+    postDeviceClick({ objectName: entry.node.name, metrics })
   }
 
   const observer = scene.onPointerObservable.add((pointerInfo) => {
