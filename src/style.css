@@ -107,6 +107,126 @@ body {
   }
 }
 
+/* 当前相机 / 控制器位姿弹窗 */
+.biz-pose-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.biz-pose-dialog__panel {
+  width: min(480px, 100%);
+  max-height: min(86vh, 640px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(12, 18, 28, 0.94);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  color: #e8f0ff;
+  font: 13px/1.45 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.biz-pose-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.biz-pose-dialog__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.biz-pose-dialog__close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #e8f0ff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.biz-pose-dialog__close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.biz-pose-dialog__body {
+  padding: 10px 12px;
+  overflow: auto;
+}
+
+.biz-pose-dialog__hint {
+  margin: 0 0 8px;
+  color: rgba(232, 240, 255, 0.65);
+  font-size: 12px;
+}
+
+.biz-pose-dialog__code {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(126, 240, 255, 0.28);
+  background: rgba(0, 0, 0, 0.35);
+  color: #7ef0ff;
+  font: 12px/1.5 ui-monospace, 'Cascadia Code', Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+  user-select: text;
+}
+
+.biz-pose-dialog__meta {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.biz-pose-dialog__meta > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.biz-pose-dialog__meta dt {
+  margin: 0;
+  color: rgba(232, 240, 255, 0.7);
+}
+
+.biz-pose-dialog__meta dd {
+  margin: 0;
+  text-align: right;
+  word-break: break-all;
+  font: 12px/1.4 ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+.biz-pose-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.biz-pose-dialog__footer .biz-btn {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 /* CSS2D 风格设备信息牌 */
 .device-info-panel {
   position: fixed;

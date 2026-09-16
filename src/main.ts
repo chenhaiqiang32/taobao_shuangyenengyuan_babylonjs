@@ -2,7 +2,11 @@ import './style.css'
 import { loadConfig } from './config/loadConfig'
 import { AppOrchestrator } from './core/app'
 // import { createParamsPanel } from './ui/paramsPanel'
-import { createBusinessFeatures, type BusinessFeaturesGlobal } from './business/features'
+import {
+  createBusinessFeatures,
+  makePipeGroupSemiTransparent,
+  type BusinessFeaturesGlobal,
+} from './business/features'
 import { createRoofToggleButton } from './ui/roofToggleButton'
 import { startOnMessage } from './message/onMessage'
 import { postOnLoaded, postOnLoading, postToParent } from './message/postMessage'
@@ -41,6 +45,9 @@ async function bootstrap(): Promise<void> {
   const g = window as unknown as BusinessFeaturesGlobal & { __pipeFlow?: PipeFlowApi | null }
   g.__app = app
   g.__business = business
+
+  // 模型已加载：「设备_管道」分组半透明，露出管内流光
+  makePipeGroupSemiTransparent(app)
 
   // 右上角业务工具条：当前工况 + 屋顶显隐 + 视角切换
   const toolbar = createRoofToggleButton(business)
