@@ -20,15 +20,15 @@ function formatVec3(v: [number, number, number]): string {
 }
 
 /** 生成可粘贴到 CAMERA_VIEW_PRESETS 的位姿片段 */
-function formatPosePresetCode(snap: CameraPoseSnapshot): string {
-  return [
-    '{',
-    `  position: ${formatVec3(snap.cameraPosition)},`,
-    `  rotationDeg: ${formatVec3(snap.cameraRotationDeg)},`,
-    `  target: ${formatVec3(snap.controllerTarget)},`,
-    '}',
-  ].join('\n')
-}
+// function formatPosePresetCode(snap: CameraPoseSnapshot): string {
+//   return [
+//     '{',
+//     `  position: ${formatVec3(snap.cameraPosition)},`,
+//     `  rotationDeg: ${formatVec3(snap.cameraRotationDeg)},`,
+//     `  target: ${formatVec3(snap.controllerTarget)},`,
+//     '}',
+//   ].join('\n')
+// }
 
 // function showCameraPoseDialog(snap: CameraPoseSnapshot): void {
 //   document.getElementById('biz-pose-dialog')?.remove()
