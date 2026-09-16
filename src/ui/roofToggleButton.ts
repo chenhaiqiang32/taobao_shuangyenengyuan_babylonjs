@@ -1,5 +1,5 @@
 import type { BusinessFeatures } from '../business/features'
-import type { CameraPoseSnapshot } from '../modules/camera'
+// import type { CameraPoseSnapshot } from '../modules/camera'
 
 /** 工况内部名 → 展示名 */
 const CONDITION_LABELS: Record<string, string> = {
