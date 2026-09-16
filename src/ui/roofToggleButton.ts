@@ -172,23 +172,24 @@ export function createRoofToggleButton(business: BusinessFeatures): BizToolbarAp
     business.setCameraView('terminal')
   })
 
-  const poseBtn = document.createElement('button')
-  poseBtn.type = 'button'
-  poseBtn.className = 'biz-btn'
-  poseBtn.textContent = '获取当前视角'
-  poseBtn.title = '读取当前相机与控制器位姿，用于修改预设视角'
-  poseBtn.addEventListener('click', () => {
-    const snap = business.getCameraPose()
-    if (!snap) {
-      window.alert('相机未就绪')
-      return
-    }
-    business.printCameraPose()
-    showCameraPoseDialog(snap)
-  })
+  // const poseBtn = document.createElement('button')
+  // poseBtn.type = 'button'
+  // poseBtn.className = 'biz-btn'
+  // poseBtn.textContent = '获取当前视角'
+  // poseBtn.title = '读取当前相机与控制器位姿，用于修改预设视角'
+  // poseBtn.addEventListener('click', () => {
+  //   const snap = business.getCameraPose()
+  //   if (!snap) {
+  //     window.alert('相机未就绪')
+  //     return
+  //   }
+  //   business.printCameraPose()
+  //   showCameraPoseDialog(snap)
+  // })
 
   syncRoofLabel()
-  bar.append(conditionEl, roofBtn, energyBtn, terminalBtn, poseBtn)
+  // bar.append(conditionEl, roofBtn, energyBtn, terminalBtn, poseBtn)
+  bar.append(conditionEl, roofBtn, energyBtn, terminalBtn)
   document.body.appendChild(bar)
   return { root: bar, setWorkingCondition }
 }
