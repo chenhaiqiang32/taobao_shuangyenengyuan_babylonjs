@@ -30,82 +30,82 @@ function formatPosePresetCode(snap: CameraPoseSnapshot): string {
   ].join('\n')
 }
 
-function showCameraPoseDialog(snap: CameraPoseSnapshot): void {
-  document.getElementById('biz-pose-dialog')?.remove()
+// function showCameraPoseDialog(snap: CameraPoseSnapshot): void {
+//   document.getElementById('biz-pose-dialog')?.remove()
 
-  const presetCode = formatPosePresetCode(snap)
+//   const presetCode = formatPosePresetCode(snap)
 
-  const overlay = document.createElement('div')
-  overlay.id = 'biz-pose-dialog'
-  overlay.className = 'biz-pose-dialog'
-  overlay.innerHTML = `
-    <div class="biz-pose-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="biz-pose-title">
-      <div class="biz-pose-dialog__header">
-        <span id="biz-pose-title" class="biz-pose-dialog__title">当前相机 / 控制器位姿</span>
-        <button type="button" class="biz-pose-dialog__close" aria-label="关闭">×</button>
-      </div>
-      <div class="biz-pose-dialog__body">
-        <p class="biz-pose-dialog__hint">可复制下方代码到 features.ts 的 CAMERA_VIEW_PRESETS</p>
-        <pre class="biz-pose-dialog__code"></pre>
-        <dl class="biz-pose-dialog__meta">
-          <div><dt>相机位置</dt><dd></dd></div>
-          <div><dt>旋转 (°)</dt><dd></dd></div>
-          <div><dt>控制器 target</dt><dd></dd></div>
-          <div><dt>alpha / beta / radius</dt><dd></dd></div>
-        </dl>
-      </div>
-      <div class="biz-pose-dialog__footer">
-        <button type="button" class="biz-btn biz-pose-dialog__copy">复制预设代码</button>
-        <button type="button" class="biz-btn biz-pose-dialog__ok">关闭</button>
-      </div>
-    </div>
-  `
+//   const overlay = document.createElement('div')
+//   overlay.id = 'biz-pose-dialog'
+//   overlay.className = 'biz-pose-dialog'
+//   overlay.innerHTML = `
+//     <div class="biz-pose-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="biz-pose-title">
+//       <div class="biz-pose-dialog__header">
+//         <span id="biz-pose-title" class="biz-pose-dialog__title">当前相机 / 控制器位姿</span>
+//         <button type="button" class="biz-pose-dialog__close" aria-label="关闭">×</button>
+//       </div>
+//       <div class="biz-pose-dialog__body">
+//         <p class="biz-pose-dialog__hint">可复制下方代码到 features.ts 的 CAMERA_VIEW_PRESETS</p>
+//         <pre class="biz-pose-dialog__code"></pre>
+//         <dl class="biz-pose-dialog__meta">
+//           <div><dt>相机位置</dt><dd></dd></div>
+//           <div><dt>旋转 (°)</dt><dd></dd></div>
+//           <div><dt>控制器 target</dt><dd></dd></div>
+//           <div><dt>alpha / beta / radius</dt><dd></dd></div>
+//         </dl>
+//       </div>
+//       <div class="biz-pose-dialog__footer">
+//         <button type="button" class="biz-btn biz-pose-dialog__copy">复制预设代码</button>
+//         <button type="button" class="biz-btn biz-pose-dialog__ok">关闭</button>
+//       </div>
+//     </div>
+//   `
 
-  const codeEl = overlay.querySelector('.biz-pose-dialog__code') as HTMLPreElement
-  codeEl.textContent = presetCode
+//   const codeEl = overlay.querySelector('.biz-pose-dialog__code') as HTMLPreElement
+//   codeEl.textContent = presetCode
 
-  const dds = overlay.querySelectorAll('.biz-pose-dialog__meta dd')
-  dds[0].textContent = formatVec3(snap.cameraPosition)
-  dds[1].textContent = formatVec3(snap.cameraRotationDeg)
-  dds[2].textContent = formatVec3(snap.controllerTarget)
-  dds[3].textContent = `${snap.alpha} / ${snap.beta} / ${snap.radius}`
+//   const dds = overlay.querySelectorAll('.biz-pose-dialog__meta dd')
+//   dds[0].textContent = formatVec3(snap.cameraPosition)
+//   dds[1].textContent = formatVec3(snap.cameraRotationDeg)
+//   dds[2].textContent = formatVec3(snap.controllerTarget)
+//   dds[3].textContent = `${snap.alpha} / ${snap.beta} / ${snap.radius}`
 
-  const close = (): void => {
-    overlay.remove()
-    window.removeEventListener('keydown', onKey)
-  }
-  const onKey = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape') close()
-  }
+//   const close = (): void => {
+//     overlay.remove()
+//     window.removeEventListener('keydown', onKey)
+//   }
+//   const onKey = (e: KeyboardEvent): void => {
+//     if (e.key === 'Escape') close()
+//   }
 
-  overlay.querySelector('.biz-pose-dialog__close')?.addEventListener('click', close)
-  overlay.querySelector('.biz-pose-dialog__ok')?.addEventListener('click', close)
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close()
-  })
+//   overlay.querySelector('.biz-pose-dialog__close')?.addEventListener('click', close)
+//   overlay.querySelector('.biz-pose-dialog__ok')?.addEventListener('click', close)
+//   overlay.addEventListener('click', (e) => {
+//     if (e.target === overlay) close()
+//   })
 
-  const copyBtn = overlay.querySelector('.biz-pose-dialog__copy') as HTMLButtonElement
-  copyBtn.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(presetCode)
-      copyBtn.textContent = '已复制'
-      window.setTimeout(() => {
-        copyBtn.textContent = '复制预设代码'
-      }, 1500)
-    } catch {
-      // 降级：选中文本便于 Ctrl+C
-      const range = document.createRange()
-      range.selectNodeContents(codeEl)
-      const sel = window.getSelection()
-      sel?.removeAllRanges()
-      sel?.addRange(range)
-      copyBtn.textContent = '请手动复制'
-    }
-  })
+//   const copyBtn = overlay.querySelector('.biz-pose-dialog__copy') as HTMLButtonElement
+//   copyBtn.addEventListener('click', async () => {
+//     try {
+//       await navigator.clipboard.writeText(presetCode)
+//       copyBtn.textContent = '已复制'
+//       window.setTimeout(() => {
+//         copyBtn.textContent = '复制预设代码'
+//       }, 1500)
+//     } catch {
+//       // 降级：选中文本便于 Ctrl+C
+//       const range = document.createRange()
+//       range.selectNodeContents(codeEl)
+//       const sel = window.getSelection()
+//       sel?.removeAllRanges()
+//       sel?.addRange(range)
+//       copyBtn.textContent = '请手动复制'
+//     }
+//   })
 
-  window.addEventListener('keydown', onKey)
-  document.body.appendChild(overlay)
-}
+//   window.addEventListener('keydown', onKey)
+//   document.body.appendChild(overlay)
+// }
 
 /**
  * 右上角业务工具条：当前工况 + 屋顶显隐 + 视角切换 + 获取位姿
