@@ -3,11 +3,10 @@
  * - 故障状态 1 → 淡红罩
  * - 运行状态 0 → 淡灰罩
  * - 运行状态 1 → 淡蓝罩
+ * 罩子参与深度测试，可被前方不透明模型遮挡。
  */
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { Vector3 } from '@babylonjs/core/Maths/math.vector'
-import { Constants } from '@babylonjs/core/Engines/constants'
-import { HighlightLayer } from '@babylonjs/core/Layers/highlightLayer'
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
 import type { Mesh } from '@babylonjs/core/Meshes/mesh'
@@ -17,9 +16,6 @@ import type { Scene } from '@babylonjs/core/scene'
 import type { AppOrchestrator } from '../core/app'
 import { normalizeDeviceName } from './deviceMetrics'
 import type { ModelUpdateObject } from '../message/types'
-
-/** 独立渲染组：在模型与透明层之后绘制，且不参与深度遮挡 */
-const SHELL_RENDER_GROUP = 2
 
 const SHELL_THEME = {
   stopped: {
@@ -120,8 +116,8 @@ function createShellMaterial(scene: Scene, objectName: string): StandardMaterial
   mat.backFaceCulling = false
   mat.transparencyMode = Material.MATERIAL_ALPHABLEND
   mat.separateCullingPass = true
+  // 读深度以便被模型遮挡；不写深度，避免干扰其它半透明物体排序
   mat.disableDepthWrite = true
-  mat.depthFunction = Constants.ALWAYS
   return mat
 }
 
@@ -134,7 +130,6 @@ function fitShellToMeshes(shell: Mesh, meshes: AbstractMesh[]): void {
 
 function createDeviceShell(
   scene: Scene,
-  glowLayer: HighlightLayer,
   objectName: string,
   kind: Exclude<StatusKind, 'none'>,
   meshes: AbstractMesh[],
@@ -143,7 +138,6 @@ function createDeviceShell(
   const material = createShellMaterial(scene, objectName)
   shell.material = material
   shell.isPickable = false
-  shell.renderingGroupId = SHELL_RENDER_GROUP
   shell.alphaIndex = 900
   fitShellToMeshes(shell, meshes)
 
@@ -155,7 +149,6 @@ function createDeviceShell(
     pulsePhase: Math.random() * Math.PI * 2,
   }
   applyShellTheme(state)
-  glowLayer.addMesh(shell, SHELL_THEME[kind].color)
   return state
 }
 
@@ -172,22 +165,12 @@ export function createDeviceStatusOverlay(app: AppOrchestrator): DeviceStatusOve
   if (!ctx?.scene) return null
 
   const scene = ctx.scene
-  scene.setRenderingAutoClearDepthStencil(SHELL_RENDER_GROUP, false, false, false)
-
-  const glowLayer = new HighlightLayer('deviceStatusShellGlow', scene, {
-    blurHorizontalSize: 1.05,
-    blurVerticalSize: 1.05,
-  })
-  glowLayer.innerGlow = true
-  glowLayer.outerGlow = true
-
   const model = () => app.getModelModule()
   const deviceShells = new Map<string, DeviceShellState>()
 
   const removeDeviceShell = (objectName: string): void => {
     const state = deviceShells.get(objectName)
     if (!state) return
-    glowLayer.removeMesh(state.shell)
     state.material.dispose()
     state.shell.dispose()
     deviceShells.delete(objectName)
@@ -206,30 +189,24 @@ export function createDeviceStatusOverlay(app: AppOrchestrator): DeviceStatusOve
     const existing = deviceShells.get(key)
     if (existing) {
       if (existing.kind !== kind) {
-        glowLayer.removeMesh(existing.shell)
         existing.kind = kind
         applyShellTheme(existing)
-        glowLayer.addMesh(existing.shell, SHELL_THEME[kind].color)
       }
       existing.meshes = entry.meshes
       fitShellToMeshes(existing.shell, entry.meshes)
       return
     }
 
-    deviceShells.set(key, createDeviceShell(scene, glowLayer, key, kind, entry.meshes))
+    deviceShells.set(key, createDeviceShell(scene, key, kind, entry.meshes))
   }
 
   const updateObserver = scene.onBeforeRenderObservable.add(() => {
     if (!deviceShells.size) return
     const t = performance.now() * 0.001
-    let maxBlur = 0.95
     for (const state of deviceShells.values()) {
       fitShellToMeshes(state.shell, state.meshes)
       pulseShell(state, t)
-      maxBlur = Math.max(maxBlur, 0.75 + 0.45 * Math.sin(t * SHELL_THEME[state.kind].pulseSpeed + state.pulsePhase))
     }
-    glowLayer.blurHorizontalSize = maxBlur
-    glowLayer.blurVerticalSize = maxBlur
   })
 
   const applyFromUpdate = (objects: ModelUpdateObject[]): void => {
@@ -253,7 +230,6 @@ export function createDeviceStatusOverlay(app: AppOrchestrator): DeviceStatusOve
       for (const key of [...deviceShells.keys()]) {
         removeDeviceShell(key)
       }
-      glowLayer.dispose()
     },
   }
 }

@@ -11,7 +11,6 @@ import { VertexBuffer } from '@babylonjs/core/Buffers/buffer'
 import { CreateTube } from '@babylonjs/core/Meshes/Builders/tubeBuilder'
 import { Effect } from '@babylonjs/core/Materials/effect'
 import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial'
-import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
 import { Material } from '@babylonjs/core/Materials/material'
 import { Constants } from '@babylonjs/core/Engines/constants'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
@@ -26,12 +25,15 @@ import type { ModelUpdateObject } from '../message/types'
 
 const LINES_MODEL_URL = '/models/广州双叶厂房_工况Lines.glb'
 
-/** 管道半径（底管，对齐巷道本体着色） */
+/** 流光管半径 */
 const PIPE_RADIUS = 0.05
-/** 流光管略粗，避免与底管 z-fight */
-const FLOW_RADIUS_SCALE = 1.08
 /** 外层柔光（模拟 SelectiveBloom 光晕） */
 const FLOW_GLOW_RADIUS_SCALE = 1.55
+/**
+ * 流光渲染组：晚于管道外壳（组 1），且保留组 0 实体深度
+ * → 不被管道遮挡，仍被厂房/设备等实体遮挡
+ */
+const FLOW_RENDERING_GROUP = 2
 /** 管道截面边数 */
 const PIPE_TESSELLATION = 12
 /** 路径重采样间距（保证 UV 均匀） */
@@ -45,9 +47,8 @@ const FLOW_SEGMENT_SPACING = 8
 const FLOW_SPEED = 22
 /** 流光不透明度 */
 const FLOW_OPACITY = 0.4
-/** 亮色 / 暗色（对齐巷道进风流光默认色） */
+/** 流光浅色（只保留亮段，暗底透明） */
 const FLOW_COLOR1 = new Color3(0.0235, 0.9647, 0.9333)
-const FLOW_COLOR2 = new Color3(0.0196, 0.3373, 0.4824)
 
 const FLOW_LIGHT_SHADER = 'pipeFlowLight'
 
@@ -74,7 +75,6 @@ precision highp float;
 uniform float uElapseTime;
 uniform float uCount;
 uniform vec3 uColor1;
-uniform vec3 uColor2;
 uniform float uOpacity;
 uniform float uSpeed;
 uniform float uGlowBoost;
@@ -82,12 +82,11 @@ varying vec2 vUV;
 void main(void) {
   // vUV.y：沿管弧长 / FLOW_SEGMENT_SPACING，单位波长在世界空间恒定
   float al = fract(vUV.y - uElapseTime * uSpeed * 0.04);
-  float flash = pow(al, 4.0);
-  vec3 color = mix(uColor2, uColor1, flash);
-  color += uColor1 * pow(al, 8.0) * uGlowBoost;
-  float a = al * al;
+  // 高次幂：只保留浅色亮头，暗色拖尾完全透明
+  float flash = pow(al, 6.0);
+  vec3 color = uColor1 + uColor1 * pow(al, 10.0) * uGlowBoost;
   float pathT = uCount > 1e-4 ? clamp(vUV.y / uCount, 0.0, 1.0) : 0.0;
-  float final_a = a * step(pathT, uElapseTime);
+  float final_a = flash * step(pathT, uElapseTime);
   gl_FragColor = vec4(color, final_a * uOpacity);
 }`
 }
@@ -526,17 +525,6 @@ function bakeTubeUvByArcLength(tube: Mesh, pathLength: number, spacing: number):
   tube.setVerticesData(VertexBuffer.UVKind, uvs, false)
 }
 
-/** 底管材质：对齐原巷道着色 color2 */
-function createPipeBaseMaterial(scene: Scene): StandardMaterial {
-  const mat = new StandardMaterial('pipeFlowBaseMat', scene)
-  mat.diffuseColor = FLOW_COLOR2.clone()
-  mat.emissiveColor = FLOW_COLOR2.scale(0.85)
-  mat.specularColor = Color3.Black()
-  mat.disableLighting = true
-  mat.backFaceCulling = true
-  return mat
-}
-
 /** FlowLight 材质；uCount = pathLength/spacing（仅用于显现进度） */
 function createFlowLightMaterial(
   scene: Scene,
@@ -556,7 +544,6 @@ function createFlowLightMaterial(
         'uElapseTime',
         'uCount',
         'uColor1',
-        'uColor2',
         'uOpacity',
         'uSpeed',
         'uGlowBoost',
@@ -565,14 +552,13 @@ function createFlowLightMaterial(
     },
   )
   mat.backFaceCulling = false
-  // 保留深度测试，避免流光穿过厂房模型；透明物体不写深度以免互相遮挡异常
+  // 深度测试保留：被厂房/设备遮挡；不写深度以免干扰其它透明物
   mat.disableDepthWrite = true
   mat.transparencyMode = Material.MATERIAL_ALPHABLEND
   mat.alphaMode = options?.additive ? Constants.ALPHA_ADD : Constants.ALPHA_COMBINE
   mat.setFloat('uElapseTime', 0)
   mat.setFloat('uCount', Math.max(pathBandCount, 1e-4))
   mat.setColor3('uColor1', FLOW_COLOR1)
-  mat.setColor3('uColor2', FLOW_COLOR2)
   mat.setFloat('uOpacity', options?.opacity ?? FLOW_OPACITY)
   mat.setFloat('uSpeed', FLOW_SPEED)
   mat.setFloat('uGlowBoost', options?.glowBoost ?? 0.85)
@@ -585,7 +571,6 @@ interface FlowSegment {
   kind: 'main' | 'branch'
   binding: BranchBinding | null
   root: TransformNode
-  baseTubes: Mesh[]
   flowTubes: Mesh[]
   flowMats: ShaderMaterial[]
 }
@@ -595,36 +580,17 @@ function buildTubesForPath(
   parent: TransformNode,
   id: string,
   ptsIn: Vector3[],
-  baseMat: StandardMaterial,
-): { baseTubes: Mesh[]; flowTubes: Mesh[]; flowMats: ShaderMaterial[] } | null {
+): { flowTubes: Mesh[]; flowMats: ShaderMaterial[] } | null {
   // 保持 line 顶点顺序，流向与线段方向一致
   const pts = resamplePathEvenly(ptsIn, PATH_RESAMPLE_SPACING)
   const len = pathLength(pts)
   if (pts.length < 2 || len < 0.05) return null
 
-  const baseTubes: Mesh[] = []
   const flowTubes: Mesh[] = []
   const flowMats: ShaderMaterial[] = []
   const bandCount = len / FLOW_SEGMENT_SPACING
 
   try {
-    const baseTube = CreateTube(
-      `flow_base_${id}`,
-      {
-        path: pts,
-        radius: PIPE_RADIUS,
-        tessellation: PIPE_TESSELLATION,
-        cap: Mesh.NO_CAP,
-        updatable: false,
-        sideOrientation: Mesh.FRONTSIDE,
-      },
-      scene,
-    )
-    baseTube.material = baseMat
-    baseTube.isPickable = false
-    baseTube.parent = parent
-    baseTubes.push(baseTube)
-
     const flowMat = createFlowLightMaterial(scene, `flow_light_mat_${id}`, bandCount, {
       opacity: 1,
       glowBoost: 0.9,
@@ -634,7 +600,7 @@ function buildTubesForPath(
       `flow_light_${id}`,
       {
         path: pts,
-        radius: PIPE_RADIUS * FLOW_RADIUS_SCALE,
+        radius: PIPE_RADIUS,
         tessellation: PIPE_TESSELLATION,
         cap: Mesh.NO_CAP,
         updatable: false,
@@ -646,6 +612,7 @@ function buildTubesForPath(
     flowTube.material = flowMat
     flowTube.isPickable = false
     flowTube.parent = parent
+    flowTube.renderingGroupId = FLOW_RENDERING_GROUP
     flowTube.alphaIndex = 1
     flowTubes.push(flowTube)
     flowMats.push(flowMat)
@@ -671,17 +638,18 @@ function buildTubesForPath(
     glowTube.material = glowMat
     glowTube.isPickable = false
     glowTube.parent = parent
+    glowTube.renderingGroupId = FLOW_RENDERING_GROUP
     glowTube.alphaIndex = 2
     flowTubes.push(glowTube)
     flowMats.push(glowMat)
   } catch (err) {
     console.warn(`[pipeFlow] tube create failed ${id}`, err)
     for (const m of flowMats) m.dispose()
-    for (const t of [...baseTubes, ...flowTubes]) t.dispose()
+    for (const t of flowTubes) t.dispose()
     return null
   }
 
-  return { baseTubes, flowTubes, flowMats }
+  return { flowTubes, flowMats }
 }
 
 export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi | null> {
@@ -692,6 +660,9 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
   const model = app.getModelModule()
   const parent = model.getModelPivot()
   const url = withBase(LINES_MODEL_URL)
+
+  // 组 2 不清理深度：沿用组 0 实体深度，流光仍被厂房/设备遮挡
+  scene.setRenderingAutoClearDepthStencil(FLOW_RENDERING_GROUP, false, false, false)
 
   let container: AssetContainer | null = null
   try {
@@ -708,7 +679,6 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
   }
 
   const extrasByName = await loadGltfNodeExtrasByName(url)
-  const baseMat = createPipeBaseMaterial(scene)
   const segments: FlowSegment[] = []
 
   const findGroupNode = (groupName: string): TransformNode | null => {
@@ -785,21 +755,19 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
       segRoot.parent = lineParent
       segRoot.setEnabled(false)
 
-      const baseTubes: Mesh[] = []
       const flowTubes: Mesh[] = []
       const flowMats: ShaderMaterial[] = []
 
       for (let pi = 0; pi < paths.length; pi++) {
         const pts = flatToVectors(paths[pi]!)
         if (pts.length < 2) continue
-        const built = buildTubesForPath(scene, segRoot, `${mesh.name}_${pi}`, pts, baseMat)
+        const built = buildTubesForPath(scene, segRoot, `${mesh.name}_${pi}`, pts)
         if (!built) continue
-        baseTubes.push(...built.baseTubes)
         flowTubes.push(...built.flowTubes)
         flowMats.push(...built.flowMats)
       }
 
-      if (!baseTubes.length) {
+      if (!flowTubes.length) {
         segRoot.dispose()
         continue
       }
@@ -810,7 +778,6 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
         kind,
         binding,
         root: segRoot,
-        baseTubes,
         flowTubes,
         flowMats,
       })
@@ -913,13 +880,11 @@ export async function createPipeFlow(app: AppOrchestrator): Promise<PipeFlowApi 
     dispose() {
       scene.onBeforeRenderObservable.remove(renderObserver)
       for (const seg of segments) {
-        for (const tube of seg.baseTubes) tube.dispose()
         for (const tube of seg.flowTubes) tube.dispose()
         for (const mat of seg.flowMats) mat.dispose()
         seg.root.dispose()
       }
       segments.length = 0
-      baseMat.dispose()
       container?.removeAllFromScene()
       container?.dispose()
       container = null

@@ -15,7 +15,7 @@ export const ROOF_PART_NAME = '屋顶_控制显隐'
 export const PIPE_GROUP_NAME = '设备_管道'
 
 /** 管道外壳半透明 alpha（1=不透明） */
-const PIPE_SHELL_ALPHA = 0.45
+const PIPE_SHELL_ALPHA = 0.88
 
 /** 预设视角：能源站 / 末端（相机位置 + 控制器 target） */
 export const CAMERA_VIEW_PRESETS = {
@@ -79,10 +79,22 @@ function setMaterialSemiTransparent(mat: Material, alpha: number, cloneCache: Ma
   const clone = mat.clone(`${mat.name}_pipeAlpha`) ?? mat
   clone.alpha = alpha
   clone.transparencyMode = Material.MATERIAL_ALPHABLEND
-  clone.needDepthPrePass = true
-  clone.forceDepthWrite = true
+  // 管道不写深度：流光可穿过管壁显示，仍受其它实体模型深度遮挡
+  applyPipeNoDepthWrite(clone)
   cloneCache.set(mat, clone)
   return clone
+}
+
+/** 管道外壳不写入深度缓冲（fixTransparentMaterials 之后需再调用一次） */
+function applyPipeNoDepthWrite(mat: Material | null): void {
+  if (!mat) return
+  if (mat instanceof MultiMaterial) {
+    for (const sub of mat.subMaterials) applyPipeNoDepthWrite(sub)
+    return
+  }
+  mat.needDepthPrePass = false
+  mat.forceDepthWrite = false
+  mat.disableDepthWrite = true
 }
 
 /**
@@ -117,6 +129,7 @@ export function makePipeGroupSemiTransparent(app: AppOrchestrator, alpha = PIPE_
       if (seen.has(mesh) || !mesh.material) continue
       seen.add(mesh)
       mesh.material = setMaterialSemiTransparent(mesh.material, alpha, cloneCache)
+      // 组 1：在实体之后、流光之前绘制管道外壳
       mesh.renderingGroupId = 1
       count += 1
     }
@@ -124,6 +137,12 @@ export function makePipeGroupSemiTransparent(app: AppOrchestrator, alpha = PIPE_
 
   // 统一修复透明材质深度/排序，避免旋转时面片闪烁消失
   model.fixTransparentMaterials()
+
+  // fixTransparentMaterials 会给透明材质重新打开深度写入，管道需再次关闭
+  for (const mesh of seen) {
+    applyPipeNoDepthWrite(mesh.material)
+    mesh.renderingGroupId = 1
+  }
 
   console.info(`[business] pipe group "${PIPE_GROUP_NAME}" semi-transparent meshes: ${count}`)
   return count
