@@ -282,8 +282,14 @@ function isBoundDeviceConnected(deviceName: string): boolean {
     return feedback !== null && feedback > 0
   }
   // 主机 / 冷却泵 / 冷冻泵 / 冷却塔 / 射流风机 / 放冷泵 等
-  if (/主机|冷却泵|冷冻泵|冷却塔|射流风机|放冷泵/.test(name)) {
-    return readMetric(metrics, '启停控制') === 1
+  if (/主机/.test(name)) {
+    return readMetric(metrics, '整机组运行状态') === 1
+  }
+  if (/射流风机/.test(name)) {
+    return readMetric(metrics, '运行状态') === 1
+  }
+  if (/冷却泵|冷却塔|冷冻泵|放冷泵/.test(name)) {
+    return readMetric(metrics, '运行信号') === 1
   }
   return false
 }
