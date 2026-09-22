@@ -273,7 +273,7 @@ function isBoundDeviceConnected(deviceName: string): boolean {
     return Number(p1) !== 0 || Number(p2) !== 0
   }
   if (/开关阀|压差旁通阀/.test(name)) {
-    return readMetric(metrics, '阀门开控制') === 1
+    return readMetric(metrics, '开到位状态') === 1
   }
   if (/卧式风柜|调节阀/.test(name)) {
     const open = readMetric(metrics, '阀门开度')
