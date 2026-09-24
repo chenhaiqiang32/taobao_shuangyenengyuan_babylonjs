@@ -228,23 +228,62 @@ function readMetric(metrics: Record<string, string | number>, name: string): num
   return null
 }
 
-/** 工况判定用（与 1.xlsx / 历史规则一致） */
-function isDeviceOpenForCondition(objectName: string, kind: DeviceKind): boolean {
-  const metrics = getDeviceMetrics(objectName)
-  if (!metrics) return false
-  if (kind === 'pump') return readMetric(metrics, '运行信号') === 1
-  if (kind === 'switchValve') return readMetric(metrics, '阀门开到位信号') === 1
-  const feedback = readMetric(metrics, '阀门开度反馈')
-  return feedback !== null && feedback > 0
+/**
+ * 设备开/运行判定字段（工况与支管共用）
+ * - eq1：任一字段 === 1
+ * - anyNonZero：任一字段 !== 0
+ * - gt0First：按 fields 顺序取第一个有值的字段，判定 > 0
+ */
+type DeviceOpenMetricRule =
+  | { match: RegExp; mode: 'eq1'; fields: string[] }
+  | { match: RegExp; mode: 'anyNonZero'; fields: string[] }
+  | { match: RegExp; mode: 'gt0First'; fields: string[] }
+
+const DEVICE_OPEN_METRIC_RULES: DeviceOpenMetricRule[] = [
+  { match: /加药装置/, mode: 'anyNonZero', fields: ['加药泵1运行', '加药泵2运行'] },
+  { match: /开关阀|压差旁通阀/, mode: 'eq1', fields: ['开到位状态'] },
+  { match: /卧式风柜|调节阀/, mode: 'gt0First', fields: ['阀门开度', '阀门开度反馈'] },
+  { match: /主机/, mode: 'eq1', fields: ['整机组运行状态'] },
+  { match: /射流风机/, mode: 'eq1', fields: ['运行状态'] },
+  { match: /冷却泵|冷却塔|冷冻泵|放冷泵/, mode: 'eq1', fields: ['运行信号'] },
+]
+
+function evalDeviceOpenRule(
+  metrics: Record<string, string | number>,
+  rule: DeviceOpenMetricRule,
+): boolean {
+  if (rule.mode === 'eq1') {
+    return rule.fields.some((f) => readMetric(metrics, f) === 1)
+  }
+  if (rule.mode === 'anyNonZero') {
+    return rule.fields.some((f) => Number(readMetric(metrics, f) ?? 0) !== 0)
+  }
+  for (const f of rule.fields) {
+    const v = readMetric(metrics, f)
+    if (v !== null) return v > 0
+  }
+  return false
 }
 
-function passesCheck(check: RuleCheck): boolean {
-  if (check.type === 'open') return isDeviceOpenForCondition(check.device, check.kind)
-  if (check.type === 'closed') return !isDeviceOpenForCondition(check.device, check.kind)
-  if (check.type === 'allClosed') {
-    return check.devices.every((name) => !isDeviceOpenForCondition(name, check.kind))
+/** 按设备名匹配开/运行字段（工况判定与支管联通共用） */
+function isDeviceOpen(deviceName: string): boolean {
+  const metrics = getDeviceMetrics(deviceName)
+  if (!metrics) return false
+  const name = normalizeDeviceName(deviceName)
+  for (const rule of DEVICE_OPEN_METRIC_RULES) {
+    if (rule.match.test(name)) return evalDeviceOpenRule(metrics, rule)
   }
-  return check.devices.some((name) => isDeviceOpenForCondition(name, check.kind))
+  return false
+}
+
+/** 工况判定：与支管共用 DEVICE_OPEN_METRIC_RULES */
+function passesCheck(check: RuleCheck): boolean {
+  if (check.type === 'open') return isDeviceOpen(check.device)
+  if (check.type === 'closed') return !isDeviceOpen(check.device)
+  if (check.type === 'allClosed') {
+    return check.devices.every((name) => !isDeviceOpen(name))
+  }
+  return check.devices.some((name) => isDeviceOpen(name))
 }
 
 export function resolveWorkingConditionLineName(): string | null {
@@ -261,37 +300,9 @@ interface BranchBinding {
   devices: string[]
 }
 
-/** 支管绑定设备联通判断（按设备类型字段） */
+/** 支管绑定设备联通判断（与工况共用判定字段） */
 function isBoundDeviceConnected(deviceName: string): boolean {
-  const metrics = getDeviceMetrics(deviceName)
-  if (!metrics) return false
-  const name = normalizeDeviceName(deviceName)
-
-  if (/加药装置/.test(name)) {
-    const p1 = readMetric(metrics, '加药泵1运行') ?? 0
-    const p2 = readMetric(metrics, '加药泵2运行') ?? 0
-    return Number(p1) !== 0 || Number(p2) !== 0
-  }
-  if (/开关阀|压差旁通阀/.test(name)) {
-    return readMetric(metrics, '开到位状态') === 1
-  }
-  if (/卧式风柜|调节阀/.test(name)) {
-    const open = readMetric(metrics, '阀门开度')
-    if (open !== null) return open > 0
-    const feedback = readMetric(metrics, '阀门开度反馈')
-    return feedback !== null && feedback > 0
-  }
-  // 主机 / 冷却泵 / 冷冻泵 / 冷却塔 / 射流风机 / 放冷泵 等
-  if (/主机/.test(name)) {
-    return readMetric(metrics, '整机组运行状态') === 1
-  }
-  if (/射流风机/.test(name)) {
-    return readMetric(metrics, '运行状态') === 1
-  }
-  if (/冷却泵|冷却塔|冷冻泵|放冷泵/.test(name)) {
-    return readMetric(metrics, '运行信号') === 1
-  }
-  return false
+  return isDeviceOpen(deviceName)
 }
 
 function parseDeviceList(raw: string): string[] {
