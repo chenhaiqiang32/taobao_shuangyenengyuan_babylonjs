@@ -1,8 +1,7 @@
 /**
  * 设备状态：淡淡半透明发光罩子（无显眼轮廓线）
- * - 故障状态 1 → 淡红罩
- * - 运行状态 0 → 淡灰罩
- * - 运行状态 1 → 淡蓝罩
+ * - 故障状态 / 机组报警代码 / 故障信号 1 → 淡红罩
+ * - 运行状态 / 整机组运行状态 / 运行信号 1 → 淡蓝罩
  * 罩子参与深度测试，可被前方不透明模型遮挡。
  */
 import { Color3 } from '@babylonjs/core/Maths/math.color'
@@ -18,11 +17,12 @@ import { normalizeDeviceName } from './deviceMetrics'
 import type { ModelUpdateObject } from '../message/types'
 
 const SHELL_THEME = {
-  stopped: {
-    color: Color3.FromHexString('#A8BCD4'),
-    alpha: 0.22,
-    pulseSpeed: 1.4,
-  },
+  // 灰色罩（运行=0）暂不显示，保留配置便于恢复
+  // stopped: {
+  //   color: Color3.FromHexString('#A8BCD4'),
+  //   alpha: 0.22,
+  //   pulseSpeed: 1.4,
+  // },
   running: {
     color: Color3.FromHexString('#00E8FF'),
     alpha: 0.24,
@@ -34,6 +34,9 @@ const SHELL_THEME = {
     pulseSpeed: 3.6,
   },
 } as const
+
+const FAULT_METRIC_FIELDS = ['故障状态', '机组报警代码', '故障信号'] as const
+const RUNNING_METRIC_FIELDS = ['运行状态', '整机组运行状态', '运行信号'] as const
 
 const SHELL_PADDING = 1.14
 const SHELL_MIN_SIZE = 0.15
@@ -55,7 +58,7 @@ export interface DeviceStatusOverlayApi {
 
 function readStatusMetric(
   metrics: Record<string, string | number>,
-  name: '故障状态' | '运行状态',
+  name: string,
 ): number | null {
   if (name in metrics) return Number(metrics[name])
   for (const [key, value] of Object.entries(metrics)) {
@@ -64,15 +67,30 @@ function readStatusMetric(
   return null
 }
 
+/** 任一字段 === 1 则命中；全部缺失返回 null */
+function anyMetricEq1(
+  metrics: Record<string, string | number>,
+  fields: readonly string[],
+): boolean | null {
+  let seen = false
+  for (const field of fields) {
+    const v = readStatusMetric(metrics, field)
+    if (v === null) continue
+    seen = true
+    if (v === 1) return true
+  }
+  return seen ? false : null
+}
+
 export function resolveOverlayKind(
   metrics: Record<string, string | number>,
 ): StatusKind | null {
-  const fault = readStatusMetric(metrics, '故障状态')
-  const running = readStatusMetric(metrics, '运行状态')
+  const fault = anyMetricEq1(metrics, FAULT_METRIC_FIELDS)
+  const running = anyMetricEq1(metrics, RUNNING_METRIC_FIELDS)
   if (fault === null && running === null) return null
-  if (fault === 1) return 'fault'
-  if (running === 0) return 'stopped'
-  if (running === 1) return 'running'
+  if (fault === true) return 'fault'
+  // if (running === false) return 'stopped' // 灰色罩暂不显示
+  if (running === true) return 'running'
   return 'none'
 }
 

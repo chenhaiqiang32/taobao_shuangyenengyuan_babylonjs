@@ -81,6 +81,7 @@
         <h1>demo.html · iframe 嵌入三维</h1>
         <span class="meta">推送 model-update(2).json · MODEL_UPDATE</span>
         <button type="button" id="btnPush">立即推送一次</button>
+        <button type="button" id="btnClearSelection">取消选中</button>
         <span class="meta" id="status">等待三维加载…</span>
         <span class="meta" id="flowStatus">线：-</span>
       </div>
@@ -155,6 +156,11 @@
       }
 
       document.getElementById('btnPush').addEventListener('click', pushUpdate)
+
+      document.getElementById('btnClearSelection').addEventListener('click', () => {
+        if (!postToViewer({ type: 'CLEAR_DEVICE_SELECTION' })) return
+        log('→ CLEAR_DEVICE_SELECTION')
+      })
 
       window.addEventListener('message', (event) => {
         if (event.source !== iframe.contentWindow) return

@@ -143,7 +143,7 @@ const WORKING_CONDITION_RULES: WorkingConditionRule[] = [
       { type: 'atLeastOneOpen', devices: [SV_1, SV_2], kind: 'switchValve' },
       { type: 'allClosed', devices: [CV_3, CV_4], kind: 'controlValve' },
       { type: 'closed', device: SV_5, kind: 'switchValve' },
-      { type: 'closed', device: CV_6, kind: 'controlValve' },
+      // { type: 'closed', device: CV_6, kind: 'controlValve' }, // BIM_调节阀_6
       { type: 'closed', device: CV_7, kind: 'controlValve' },
       { type: 'closed', device: CV_8, kind: 'controlValve' },
       { type: 'open', device: CV_9, kind: 'controlValve' },
@@ -159,7 +159,7 @@ const WORKING_CONDITION_RULES: WorkingConditionRule[] = [
       { type: 'closed', device: SV_2, kind: 'switchValve' },
       { type: 'atLeastOneOpen', devices: [CV_3, CV_4], kind: 'controlValve' },
       { type: 'closed', device: SV_5, kind: 'switchValve' },
-      { type: 'open', device: CV_6, kind: 'controlValve' },
+      // { type: 'open', device: CV_6, kind: 'controlValve' }, // BIM_调节阀_6
       { type: 'atLeastOneOpen', devices: [CV_7, CV_8], kind: 'controlValve' },
       { type: 'open', device: CV_9, kind: 'controlValve' },
       { type: 'open', device: CV_10, kind: 'controlValve' },
@@ -173,7 +173,7 @@ const WORKING_CONDITION_RULES: WorkingConditionRule[] = [
       { type: 'atLeastOneOpen', devices: [SV_1, SV_2], kind: 'switchValve' },
       { type: 'atLeastOneOpen', devices: [CV_3, CV_4], kind: 'controlValve' },
       { type: 'open', device: SV_5, kind: 'switchValve' },
-      { type: 'closed', device: CV_6, kind: 'controlValve' },
+      // { type: 'closed', device: CV_6, kind: 'controlValve' }, // BIM_调节阀_6
       { type: 'atLeastOneOpen', devices: [CV_7, CV_8], kind: 'controlValve' },
       { type: 'closed', device: CV_9, kind: 'controlValve' },
       { type: 'closed', device: CV_10, kind: 'controlValve' },
@@ -187,7 +187,7 @@ const WORKING_CONDITION_RULES: WorkingConditionRule[] = [
       { type: 'atLeastOneOpen', devices: [SV_1, SV_2], kind: 'switchValve' },
       { type: 'atLeastOneOpen', devices: [CV_3, CV_4], kind: 'controlValve' },
       { type: 'closed', device: SV_5, kind: 'switchValve' },
-      { type: 'open', device: CV_6, kind: 'controlValve' },
+      // { type: 'open', device: CV_6, kind: 'controlValve' }, // BIM_调节阀_6
       { type: 'atLeastOneOpen', devices: [CV_7, CV_8], kind: 'controlValve' },
       { type: 'open', device: CV_9, kind: 'controlValve' },
       { type: 'open', device: CV_10, kind: 'controlValve' },
@@ -201,7 +201,7 @@ const WORKING_CONDITION_RULES: WorkingConditionRule[] = [
       { type: 'atLeastOneOpen', devices: [SV_1, SV_2], kind: 'switchValve' },
       { type: 'atLeastOneOpen', devices: [CV_3, CV_4], kind: 'controlValve' },
       { type: 'open', device: SV_5, kind: 'switchValve' },
-      { type: 'closed', device: CV_6, kind: 'controlValve' },
+      // { type: 'closed', device: CV_6, kind: 'controlValve' }, // BIM_调节阀_6
       { type: 'atLeastOneOpen', devices: [CV_7, CV_8], kind: 'controlValve' },
       { type: 'open', device: CV_9, kind: 'controlValve' },
       { type: 'open', device: CV_10, kind: 'controlValve' },

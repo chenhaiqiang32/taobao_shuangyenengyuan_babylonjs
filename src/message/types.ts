@@ -1,6 +1,9 @@
 /** 父页面 → 三维：设备指标更新 */
 export const MSG_MODEL_UPDATE = 'MODEL_UPDATE' as const
 
+/** 父页面 → 三维：取消设备选中高亮 */
+export const MSG_CLEAR_DEVICE_SELECTION = 'CLEAR_DEVICE_SELECTION' as const
+
 /** 父页面 → 三维：工况管线调试 */
 export const MSG_PIPE_FLOW_DEBUG = 'PIPE_FLOW_DEBUG' as const
 
@@ -36,6 +39,10 @@ export interface ModelUpdateMessage {
   objects: ModelUpdateObject[]
 }
 
+export interface ClearDeviceSelectionMessage {
+  type: typeof MSG_CLEAR_DEVICE_SELECTION
+}
+
 /** 兼容参考项目的 cmd 信封格式 */
 export interface CmdMessage<T = unknown> {
   cmd: string
@@ -46,6 +53,12 @@ export function isModelUpdateMessage(data: unknown): data is ModelUpdateMessage 
   if (!data || typeof data !== 'object') return false
   const d = data as Record<string, unknown>
   return d.type === MSG_MODEL_UPDATE && Array.isArray(d.objects)
+}
+
+export function isClearDeviceSelectionMessage(data: unknown): data is ClearDeviceSelectionMessage {
+  if (!data || typeof data !== 'object') return false
+  const d = data as Record<string, unknown>
+  return d.type === MSG_CLEAR_DEVICE_SELECTION || d.cmd === MSG_CLEAR_DEVICE_SELECTION
 }
 
 export function isPipeFlowDebugMessage(data: unknown): data is PipeFlowDebugMessage {

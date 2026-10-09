@@ -76,6 +76,9 @@ async function bootstrap(): Promise<void> {
       syncWorkingConditionLabel()
       if (pipeFlow) postPipeFlowState(pipeFlow)
     },
+    onClearDeviceSelection() {
+      deviceUi?.clearSelection()
+    },
     onPipeFlowDebug(msg) {
       if (!pipeFlow) return
       if (msg.action === 'setLine') {

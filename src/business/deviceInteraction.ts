@@ -19,6 +19,8 @@ const SELECTED_COLOR = Color3.FromHexString('#22C55E')
 
 export interface DeviceInteractionApi {
   panel: DeviceInfoPanelApi
+  /** 取消选中高亮（含关闭信息牌），供父页面 CLEAR_DEVICE_SELECTION 调用 */
+  clearSelection: () => void
   dispose: () => void
 }
 
@@ -95,11 +97,21 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
     openForDevice(entry)
   })
 
+  const clearSelection = (): void => {
+    pinnedObjectName = null
+    if (panel.isOpen()) {
+      panel.hide() // onClose → refreshHighlight
+    } else {
+      refreshHighlight()
+    }
+  }
+
   const indexed = model().getBimDeviceEntries().length
   console.info(`[deviceInteraction] ready, indexed devices=${indexed}`)
 
   return {
     panel,
+    clearSelection,
     dispose() {
       scene.onPointerObservable.remove(observer)
       pinnedObjectName = null
