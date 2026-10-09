@@ -1,1 +1,0 @@
-import{n as e}from"./rolldown-runtime-B0Z9INg1.js";var t,n=e((()=>{t=class{static get UniqueId(){let e=this._UniqueIdCounter;return this._UniqueIdCounter++,e}},t._UniqueIdCounter=1}));export{n,t};

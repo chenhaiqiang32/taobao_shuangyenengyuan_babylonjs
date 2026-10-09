@@ -1,1 +1,0 @@
-var e={name:`fbx`,extensions:{".fbx":{isBinary:!0}}};export{e as t};
