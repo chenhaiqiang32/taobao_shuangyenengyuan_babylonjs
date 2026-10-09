@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./rolldown-runtime-B0Z9INg1.js";import{n,t as r}from"./engine.multiRender.pure-CGNHOB4D.js";var i=e((()=>{})),a=t({RegisterEnginesExtensionsEngineMultiRender:()=>r}),o=e((()=>{i(),n(),n(),r()}));export{o as n,a as t};
