@@ -25,9 +25,9 @@ export const CAMERA_VIEW_PRESETS = {
     target: [24.326, -34.294, -84.309],
   },
   terminal: {
-    position: [227.295, 31.578, -90.585],
-    rotationDeg: [-4.63, 125.78, 0],
-    target: [38.813, 12.77, 45.262],
+    position: [-3.785, 201.84, -26.05],
+    rotationDeg: [-87.33, -179.69, 0],
+    target: [-3.734, -0.776, -16.589],
   },
 } as const satisfies Record<string, CameraPose>
 

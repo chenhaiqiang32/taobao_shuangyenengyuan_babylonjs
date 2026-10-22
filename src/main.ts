@@ -12,6 +12,7 @@ import { startOnMessage } from './message/onMessage'
 import { postOnLoaded, postOnLoading, postToParent } from './message/postMessage'
 import { createDeviceInteraction } from './business/deviceInteraction'
 import { createDeviceStatusOverlay } from './business/deviceStatusOverlay'
+import { createDeviceStatusBadge } from './business/deviceStatusBadge'
 import { createPipeFlow, type PipeFlowApi } from './business/pipeFlow'
 import { resetCoolingTowerFans, syncCoolingTowerFans } from './business/coolingTowerFan'
 import { MSG_PIPE_FLOW_DEBUG } from './message/types'
@@ -55,6 +56,11 @@ async function bootstrap(): Promise<void> {
   // 设备点击信息牌 + 父页面 MODEL_UPDATE
   const deviceUi = createDeviceInteraction(app)
   const statusOverlay = createDeviceStatusOverlay(app)
+  const statusBadge = createDeviceStatusBadge(app, {
+    onBadgeClick(objectName) {
+      deviceUi?.selectDevice(objectName)
+    },
+  })
   const pipeFlow = await createPipeFlow(app)
   g.__pipeFlow = pipeFlow
 
@@ -68,6 +74,7 @@ async function bootstrap(): Promise<void> {
   startOnMessage({
     onModelUpdate(objects) {
       statusOverlay?.applyFromUpdate(objects)
+      statusBadge?.applyFromUpdate(objects)
       pipeFlow?.applyFromUpdate(objects)
       syncCoolingTowerFans(app)
       for (const obj of objects) {

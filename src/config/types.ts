@@ -44,7 +44,10 @@ export interface ControllerConfig {
   attachControl: boolean
   /** 控制器默认坐标（通常为绑定模型包围盒中心） */
   target: Vec3
-  /** 越小平移越灵敏（Babylon：位移 ∝ 1/panningSensibility） */
+  /**
+   * 标定半径（约 80）下的平移灵敏度；越小越灵敏（Babylon：位移 ∝ 1/panningSensibility）。
+   * 运行时会按 camera.radius 缩放：靠近时自动降低拖动手感。
+   */
   panningSensibility: number
   /** wheelDeltaPercentage 为 0 时生效；越大缩放越慢 */
   wheelPrecision: number

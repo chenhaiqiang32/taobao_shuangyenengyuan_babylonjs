@@ -1,7 +1,7 @@
 /**
- * 设备状态：淡淡半透明发光罩子（无显眼轮廓线）
- * - 故障状态 / 机组报警代码 / 故障信号 1 → 淡红罩
- * - 运行状态 / 整机组运行状态 / 运行信号 1 → 淡蓝罩
+ * 设备状态：半透明发光罩子（无显眼轮廓线）
+ * - 故障状态 / 机组报警代码 / 故障信号 1 → 深红罩
+ * - 运行状态 / 整机组运行状态 / 运行信号 1 → 深蓝罩
  * 罩子参与深度测试，可被前方不透明模型遮挡。
  */
 import { Color3 } from '@babylonjs/core/Maths/math.color'
@@ -24,13 +24,13 @@ const SHELL_THEME = {
   //   pulseSpeed: 1.4,
   // },
   running: {
-    color: Color3.FromHexString('#00E8FF'),
-    alpha: 0.24,
+    color: Color3.FromHexString('#0099CC'),
+    alpha: 0.48,
     pulseSpeed: 2.2,
   },
   fault: {
-    color: Color3.FromHexString('#FF4466'),
-    alpha: 0.26,
+    color: Color3.FromHexString('#CC2233'),
+    alpha: 0.52,
     pulseSpeed: 3.6,
   },
 } as const
@@ -124,7 +124,7 @@ function computeWorldBounds(meshes: AbstractMesh[]): { center: Vector3; size: Ve
 function applyShellTheme(state: DeviceShellState): void {
   const theme = SHELL_THEME[state.kind]
   state.material.diffuseColor = theme.color
-  state.material.emissiveColor = theme.color.scale(0.85)
+  state.material.emissiveColor = theme.color.scale(1.05)
   state.material.alpha = theme.alpha
 }
 
@@ -174,8 +174,8 @@ function pulseShell(state: DeviceShellState, timeSec: number): void {
   const theme = SHELL_THEME[state.kind]
   const wave = 0.5 + 0.5 * Math.sin(timeSec * theme.pulseSpeed + state.pulsePhase)
 
-  state.material.alpha = theme.alpha * (0.92 + 0.12 * wave)
-  state.material.emissiveColor = theme.color.scale(0.7 + 0.45 * wave)
+  state.material.alpha = theme.alpha * (0.88 + 0.18 * wave)
+  state.material.emissiveColor = theme.color.scale(0.85 + 0.4 * wave)
 }
 
 export function createDeviceStatusOverlay(app: AppOrchestrator): DeviceStatusOverlayApi | null {

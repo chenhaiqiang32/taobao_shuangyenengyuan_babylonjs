@@ -46,7 +46,7 @@ body {
   position: fixed;
   top: 10px;
   right: 280px;
-  z-index: 30;
+  z-index: 999;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -354,4 +354,128 @@ body {
   fill: rgba(0, 229, 255, 0.95);
   stroke: rgba(255, 255, 255, 0.9);
   stroke-width: 1;
+}
+
+/* 常显设备状态浮窗（射流风机 / 卧式风柜 / 末端温度） */
+.device-status-badges {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.device-status-badge {
+  --badge-bg: rgba(18, 28, 40, 0.52);
+  --badge-border: rgba(180, 200, 220, 0.28);
+  --badge-accent: rgba(180, 200, 220, 0.75);
+  --badge-text: rgba(255, 255, 255, 0.88);
+  position: fixed;
+  left: 0;
+  top: 0;
+  /* 锚点落在底部箭头尖端，指向设备 */
+  transform: translate(-50%, calc(-100% - 5px));
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--badge-border);
+  background: var(--badge-bg);
+  color: var(--badge-text);
+  font: 500 10px/1.2 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  user-select: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.device-status-badge:hover {
+  filter: brightness(1.12);
+}
+
+/* 左侧状态小圆点，状态色只体现在点上，不再整块刷色 */
+.device-status-badge::before {
+  content: '';
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--badge-accent);
+  box-shadow: 0 0 4px var(--badge-accent);
+}
+
+.device-status-badge__text {
+  display: block;
+}
+
+.device-status-badge__arrow {
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 5px;
+  height: 5px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--badge-bg);
+  border-right: 1px solid var(--badge-border);
+  border-bottom: 1px solid var(--badge-border);
+  pointer-events: none;
+}
+
+/* 运行：淡青绿描边 + 圆点 */
+.device-status-badge[data-tone='running'] {
+  --badge-bg: rgba(16, 40, 32, 0.48);
+  --badge-border: rgba(110, 200, 160, 0.32);
+  --badge-accent: rgba(120, 220, 170, 0.85);
+  --badge-text: rgba(220, 245, 230, 0.92);
+}
+
+/* 故障：淡红描边 + 圆点 */
+.device-status-badge[data-tone='fault'] {
+  --badge-bg: rgba(48, 22, 24, 0.5);
+  --badge-border: rgba(230, 130, 130, 0.35);
+  --badge-accent: rgba(240, 120, 120, 0.9);
+  --badge-text: rgba(255, 230, 230, 0.92);
+}
+
+/* 停机：中性灰 */
+.device-status-badge[data-tone='stopped'] {
+  --badge-bg: rgba(28, 32, 40, 0.48);
+  --badge-border: rgba(160, 170, 185, 0.26);
+  --badge-accent: rgba(170, 180, 195, 0.7);
+  --badge-text: rgba(230, 235, 240, 0.78);
+}
+
+/* 温度传感器：独立样式（非运行状态色），圆角卡片 + 琥珀色读数 */
+.device-status-badge--temp,
+.device-status-badge[data-tone='temp'] {
+  --badge-bg: rgba(22, 28, 38, 0.58);
+  --badge-border: rgba(255, 186, 96, 0.4);
+  --badge-text: #ffd39a;
+  gap: 0;
+  padding: 2px 8px 3px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  box-shadow:
+    0 1px 0 rgba(255, 200, 120, 0.1) inset,
+    0 2px 10px rgba(0, 0, 0, 0.28);
+}
+
+.device-status-badge--temp::before,
+.device-status-badge[data-tone='temp']::before {
+  /* 去掉状态圆点 */
+  display: none;
+}
+
+.device-status-badge--temp .device-status-badge__arrow,
+.device-status-badge[data-tone='temp'] .device-status-badge__arrow {
+  background: var(--badge-bg);
+  border-right-color: var(--badge-border);
+  border-bottom-color: var(--badge-border);
 }

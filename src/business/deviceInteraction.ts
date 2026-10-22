@@ -19,6 +19,8 @@ const SELECTED_COLOR = Color3.FromHexString('#22C55E')
 
 export interface DeviceInteractionApi {
   panel: DeviceInfoPanelApi
+  /** 按 objectName 选中设备（与点击模型一致，含 web3dDeviceClick） */
+  selectDevice: (objectName: string) => boolean
   /** 取消选中高亮（含关闭信息牌），供父页面 CLEAR_DEVICE_SELECTION 调用 */
   clearSelection: () => void
   dispose: () => void
@@ -75,6 +77,13 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
     postDeviceClick({ objectName: entry.node.name, metrics })
   }
 
+  const selectDevice = (objectName: string): boolean => {
+    const entry = model().getBimDeviceEntry(objectName)
+    if (!entry) return false
+    openForDevice(entry)
+    return true
+  }
+
   const observer = scene.onPointerObservable.add((pointerInfo) => {
     if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
       refreshHighlight()
@@ -111,6 +120,7 @@ export function createDeviceInteraction(app: AppOrchestrator): DeviceInteraction
 
   return {
     panel,
+    selectDevice,
     clearSelection,
     dispose() {
       scene.onPointerObservable.remove(observer)

@@ -1,11 +1,17 @@
 import { Vector3 } from '@babylonjs/core/Maths/math.vector'
+import type { Observer } from '@babylonjs/core/Misc/observable'
+import type { Scene } from '@babylonjs/core/scene'
 import type { ControllerConfig } from '../config/types'
 import type { AppContext, SceneModule } from '../core/types'
+
+/** panningSensibility 标定距离：靠近时按 radius 比例提高 sensibility，降低屏幕位移感 */
+const PANNING_REFERENCE_RADIUS = 80
 
 export class ControllerModule implements SceneModule<ControllerConfig> {
   readonly name = 'controller'
   private ctx: AppContext | null = null
   private contextMenuHandler: ((e: Event) => void) | null = null
+  private panScaleObserver: Observer<Scene> | null = null
 
   create(ctx: AppContext, config: ControllerConfig): void {
     this.ctx = ctx
@@ -15,10 +21,12 @@ export class ControllerModule implements SceneModule<ControllerConfig> {
   apply(config: ControllerConfig): void {
     const camera = this.ctx?.camera
     const canvas = this.ctx?.canvas
-    if (!camera || !canvas) return
+    const scene = this.ctx?.scene
+    if (!camera || !canvas || !scene) return
 
     camera.detachControl()
     this.unbindContextMenu(canvas)
+    this.unbindPanScale(scene)
 
     if (config.attachControl) {
       camera.attachControl(
@@ -42,7 +50,6 @@ export class ControllerModule implements SceneModule<ControllerConfig> {
     }
 
     camera.inertia = config.inertia
-    camera.panningSensibility = config.allowPan ? config.panningSensibility : 0
     camera.angularSensibilityX = config.allowRotate ? config.angularSensibilityX : 1e8
     camera.angularSensibilityY = config.allowRotate ? config.angularSensibilityY : 1e8
     camera.pinchPrecision = config.pinchPrecision
@@ -54,6 +61,26 @@ export class ControllerModule implements SceneModule<ControllerConfig> {
       camera.wheelDeltaPercentage = 0
       camera.wheelPrecision = 1e8
     }
+
+    this.syncPanningSensibility(config)
+    if (config.allowPan && config.attachControl) {
+      this.panScaleObserver = scene.onBeforeRenderObservable.add(() => {
+        this.syncPanningSensibility(config)
+      })
+    }
+  }
+
+  /** 平移手感随距离收敛：靠近时提高 sensibility，避免拖动过快 */
+  private syncPanningSensibility(config: ControllerConfig): void {
+    const camera = this.ctx?.camera
+    if (!camera) return
+    if (!config.allowPan) {
+      camera.panningSensibility = 0
+      return
+    }
+    const radius = Math.max(camera.radius, 1)
+    camera.panningSensibility =
+      config.panningSensibility * (PANNING_REFERENCE_RADIUS / radius)
   }
 
   /** 由 ModelModule 在绑定包围盒中心时调用 */
@@ -75,7 +102,17 @@ export class ControllerModule implements SceneModule<ControllerConfig> {
     }
   }
 
+  private unbindPanScale(scene: Scene): void {
+    if (this.panScaleObserver) {
+      scene.onBeforeRenderObservable.remove(this.panScaleObserver)
+      this.panScaleObserver = null
+    }
+  }
+
   dispose(): void {
+    if (this.ctx?.scene) {
+      this.unbindPanScale(this.ctx.scene)
+    }
     if (this.ctx?.canvas) {
       this.unbindContextMenu(this.ctx.canvas)
     }

@@ -8,7 +8,7 @@ import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { Vector3 } from '@babylonjs/core/Maths/math.vector'
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer'
-import { CreateTube } from '@babylonjs/core/Meshes/Builders/tubeBuilder'
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { Effect } from '@babylonjs/core/Materials/effect'
 import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial'
 import { Material } from '@babylonjs/core/Materials/material'
@@ -26,9 +26,9 @@ import type { ModelUpdateObject } from '../message/types'
 const LINES_MODEL_URL = '/models/广州双叶厂房_工况Lines.glb'
 
 /** 流光管半径 */
-const PIPE_RADIUS = 0.05
+const PIPE_RADIUS = 0.32
 /** 外层柔光（模拟 SelectiveBloom 光晕） */
-const FLOW_GLOW_RADIUS_SCALE = 1.55
+const FLOW_GLOW_RADIUS_SCALE = 0.05
 /**
  * 流光渲染组：晚于管道外壳（组 1），且保留组 0 实体深度
  * → 不被管道遮挡，仍被厂房/设备等实体遮挡
@@ -42,13 +42,13 @@ const PATH_RESAMPLE_SPACING = 1.0
  * 流光段波长（场景单位）：每段流光占用的弧长，所有管子统一
  * 原项目为 length/200 段 → 波长约 200
  */
-const FLOW_SEGMENT_SPACING = 8
+const FLOW_SEGMENT_SPACING = 4
 /** 流光速度（对齐 FlowLight2 uniform speed，片元内再 * 0.04） */
-const FLOW_SPEED = 22
+const FLOW_SPEED = 10
 /** 流光不透明度 */
 const FLOW_OPACITY = 0.4
 /** 流光浅色（只保留亮段，暗底透明） */
-const FLOW_COLOR1 = new Color3(0.0235, 0.9647, 0.9333)
+const FLOW_COLOR1 = new Color3(0.9647, 0.9647, 0.9333)
 
 const FLOW_LIGHT_SHADER = 'pipeFlowLight'
 
@@ -69,7 +69,8 @@ void main(void) {
   gl_Position = worldViewProjection * vec4(position, 1.0);
 }`
 
-  // CreateTube：uv.y 经弧长烘焙后为「距离 / spacing」，各管流光波长一致
+  // uv.x=0.5 为正上方；uv.y = 中心线弧长 / FLOW_SEGMENT_SPACING
+  // 只在管顶画一支箭头（线身 + 两翼）
   Effect.ShadersStore[`${FLOW_LIGHT_SHADER}FragmentShader`] = `
 precision highp float;
 uniform float uElapseTime;
@@ -78,16 +79,61 @@ uniform vec3 uColor1;
 uniform float uOpacity;
 uniform float uSpeed;
 uniform float uGlowBoost;
+uniform float uSpacing;
+uniform float uRadius;
 varying vec2 vUV;
+
+#define TAU 6.28318530718
+
+float lineDist(vec2 p, vec2 a, vec2 b) {
+  vec2 pa = p - a;
+  vec2 ba = b - a;
+  float denom = dot(ba, ba);
+  float h = denom > 1e-8 ? clamp(dot(pa, ba) / denom, 0.0, 1.0) : 0.0;
+  return length(pa - ba * h);
+}
+
+float lineMask(vec2 p, vec2 a, vec2 b, float stroke) {
+  float distN = lineDist(p, a, b) / max(stroke, 1e-4);
+  float core = 1.0 - smoothstep(0.22, 0.82, distN);
+  float halo = exp(-distN * distN * 1.6) * 0.4;
+  return clamp(core + halo, 0.0, 1.0);
+}
+
+float arrowMask(vec2 p, vec2 a, vec2 b, float stroke, float barbLen) {
+  vec2 dir = normalize(b - a);
+  vec2 side = vec2(-dir.y, dir.x);
+  float body = lineMask(p, a, b, stroke);
+  vec2 leftDir = normalize(side * 0.5403 + (-dir) * 0.8415);
+  vec2 rightDir = normalize(-side * 0.5403 + (-dir) * 0.8415);
+  float left = lineMask(p, b, b + leftDir * barbLen, stroke);
+  float right = lineMask(p, b, b + rightDir * barbLen, stroke);
+  return max(body, max(left, right));
+}
+
 void main(void) {
-  // vUV.y：沿管弧长 / FLOW_SEGMENT_SPACING，单位波长在世界空间恒定
-  float al = fract(vUV.y - uElapseTime * uSpeed * 0.04);
-  // 高次幂：只保留浅色亮头，暗色拖尾完全透明
-  float flash = pow(al, 6.0);
-  vec3 color = uColor1 + uColor1 * pow(al, 10.0) * uGlowBoost;
+  float scroll = uElapseTime * uSpeed * 0.04;
+  float al = fract(vUV.y - scroll);
+  float along = al * uSpacing;
+  // uv.x=0.5 为正上方，左右为沿管周的弧长偏移
+  float r = max(uRadius, 1e-4);
+  float across = (vUV.x - 0.5) * TAU * r;
+  // 箭头总宽约管径 1/4（不是 1/2）；翼尖侧向分量约 0.54
+  float stroke = r * 0.22;
+  float tailY = uSpacing * 0.58;
+  float headY = uSpacing * 0.90;
+  float barb = (r * 0.25) / 0.5403;
+  vec2 head = vec2(0.0, headY);
+  vec2 tail = vec2(0.0, tailY);
+  float d = arrowMask(vec2(across, along), tail, head, stroke, barb);
+
+  float arrowGlow = d * (0.5 + 0.5 * d + d * d);
+  float intensity = clamp(min(arrowGlow, 2.0) * 0.85, 0.0, 1.0);
+
   float pathT = uCount > 1e-4 ? clamp(vUV.y / uCount, 0.0, 1.0) : 0.0;
-  float final_a = flash * step(pathT, uElapseTime);
-  gl_FragColor = vec4(color, final_a * uOpacity);
+  float alpha = intensity * uOpacity * step(pathT, uElapseTime);
+  vec3 color = uColor1 * (0.8 + d * uGlowBoost);
+  gl_FragColor = vec4(color, alpha);
 }`
 }
 
@@ -531,15 +577,137 @@ function resamplePathEvenly(pts: Vector3[], spacing: number): Vector3[] {
   return out
 }
 
-/** 将 CreateTube 的 V(0~1) 转为弧长/spacing，保证各管流光波长一致 */
-function bakeTubeUvByArcLength(tube: Mesh, pathLength: number, spacing: number): void {
-  const uvs = tube.getVerticesData(VertexBuffer.UVKind)
-  if (!uvs?.length) return
-  const bands = Math.max(pathLength, 1e-4) / Math.max(spacing, 1e-4)
-  for (let i = 1; i < uvs.length; i += 2) {
-    uvs[i] = uvs[i]! * bands
+/** 拐角处两段切向点积低于此值时，视为需要单独的平切截面 */
+const CORNER_TANGENT_DOT = 0.9995
+
+function perpendicularNormal(tangent: Vector3): Vector3 {
+  const helper = Math.abs(tangent.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0)
+  return Vector3.Cross(tangent, helper).normalize()
+}
+
+interface TubeRing {
+  center: Vector3
+  tangent: Vector3
+  distance: number
+}
+
+/**
+ * 每个直段上的截面都垂直于该段，拐角处叠两圈（进入/离开方向）。
+ * CreateTube 用角平分线做法线，并且按每条经线各自归一化 V，弯管上亮头会被切斜。
+ */
+function buildTubeRings(pts: Vector3[]): TubeRing[] {
+  const rings: TubeRing[] = []
+  let distance = 0
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i]!
+    const b = pts[i + 1]!
+    const delta = b.subtract(a)
+    const segLen = delta.length()
+    if (segLen < 1e-6) continue
+    const tangent = delta.scale(1 / segLen)
+    const last = rings[rings.length - 1]
+
+    if (!last) {
+      rings.push({ center: a.clone(), tangent: tangent.clone(), distance })
+    } else if (Vector3.Dot(last.tangent, tangent) < CORNER_TANGENT_DOT) {
+      rings.push({ center: a.clone(), tangent: tangent.clone(), distance })
+    }
+
+    distance += segLen
+    rings.push({ center: b.clone(), tangent: tangent.clone(), distance })
   }
-  tube.setVerticesData(VertexBuffer.UVKind, uvs, false)
+
+  return rings
+}
+
+/**
+ * 流光管：uv.y 取中心线弧长 / spacing，同一圈截面完全相同，亮头是垂直于管轴的平切面。
+ * 双面顶点与原先 CreateTube(DOUBLESIDE) 一致，避免发光强度变化。
+ */
+function createFlatHeadFlowTube(
+  scene: Scene,
+  name: string,
+  pts: Vector3[],
+  radius: number,
+  tessellation: number,
+  spacing: number,
+): Mesh | null {
+  const rings = buildTubeRings(pts)
+  if (rings.length < 2) return null
+
+  const slices = Math.max(3, tessellation | 0)
+  const stride = slices + 1
+  const frontCount = rings.length * stride
+  const positions = new Float32Array(frontCount * 3)
+  const uvs = new Float32Array(frontCount * 2)
+  const indices: number[] = []
+  const invSpacing = 1 / Math.max(spacing, 1e-4)
+
+  const worldUp = new Vector3(0, 1, 0)
+  for (let r = 0; r < rings.length; r++) {
+    const ring = rings[r]!
+    // 每圈对齐世界「上」，使 uv.x=0.5 始终在管顶；接缝落在管底
+    let top = worldUp.subtract(ring.tangent.scale(Vector3.Dot(worldUp, ring.tangent)))
+    if (top.lengthSquared() < 1e-8) top = perpendicularNormal(ring.tangent)
+    else top.normalize()
+    let side = Vector3.Cross(ring.tangent, top)
+    if (side.lengthSquared() < 1e-12) side = perpendicularNormal(ring.tangent)
+    else side.normalize()
+    top = Vector3.Cross(side, ring.tangent).normalize()
+
+    const v = ring.distance * invSpacing
+    const base = r * stride
+    for (let s = 0; s <= slices; s++) {
+      // ang=0 管底（接缝），ang=π 正上方
+      const ang = (s / slices) * Math.PI * 2
+      const cos = Math.cos(ang)
+      const sin = Math.sin(ang)
+      const vi = base + s
+      positions[vi * 3] = ring.center.x + (-top.x * cos + side.x * sin) * radius
+      positions[vi * 3 + 1] = ring.center.y + (-top.y * cos + side.y * sin) * radius
+      positions[vi * 3 + 2] = ring.center.z + (-top.z * cos + side.z * sin) * radius
+      uvs[vi * 2] = s / slices
+      uvs[vi * 2 + 1] = v
+    }
+  }
+
+  for (let r = 0; r < rings.length - 1; r++) {
+    const rowA = r * stride
+    const rowB = (r + 1) * stride
+    for (let s = 0; s < slices; s++) {
+      const i0 = rowA + s
+      const i1 = rowA + s + 1
+      const i2 = rowB + s
+      const i3 = rowB + s + 1
+      indices.push(i0, i2, i1, i1, i2, i3)
+    }
+  }
+
+  const positionsOut = new Float32Array(frontCount * 2 * 3)
+  const uvsOut = new Float32Array(frontCount * 2 * 2)
+  positionsOut.set(positions)
+  positionsOut.set(positions, positions.length)
+  uvsOut.set(uvs)
+  uvsOut.set(uvs, uvs.length)
+
+  const indicesOut = new Array<number>(indices.length * 2)
+  for (let i = 0; i < indices.length; i++) indicesOut[i] = indices[i]!
+  for (let i = 0; i < indices.length; i += 3) {
+    const o = indices.length + i
+    indicesOut[o] = indices[i + 2]! + frontCount
+    indicesOut[o + 1] = indices[i + 1]! + frontCount
+    indicesOut[o + 2] = indices[i]! + frontCount
+  }
+
+  const mesh = new Mesh(name, scene)
+  const vertexData = new VertexData()
+  vertexData.positions = positionsOut
+  vertexData.uvs = uvsOut
+  vertexData.indices = indicesOut
+  vertexData.applyToMesh(mesh, false)
+  mesh.refreshBoundingInfo()
+  return mesh
 }
 
 /** FlowLight 材质；uCount = pathLength/spacing（仅用于显现进度） */
@@ -547,7 +715,7 @@ function createFlowLightMaterial(
   scene: Scene,
   name: string,
   pathBandCount: number,
-  options?: { opacity?: number; glowBoost?: number; additive?: boolean },
+  options?: { opacity?: number; glowBoost?: number; additive?: boolean; radius?: number },
 ): ShaderMaterial {
   ensureFlowLightShader()
   const mat = new ShaderMaterial(
@@ -564,6 +732,8 @@ function createFlowLightMaterial(
         'uOpacity',
         'uSpeed',
         'uGlowBoost',
+        'uSpacing',
+        'uRadius',
       ],
       needAlphaBlending: true,
     },
@@ -579,6 +749,8 @@ function createFlowLightMaterial(
   mat.setFloat('uOpacity', options?.opacity ?? FLOW_OPACITY)
   mat.setFloat('uSpeed', FLOW_SPEED)
   mat.setFloat('uGlowBoost', options?.glowBoost ?? 0.85)
+  mat.setFloat('uSpacing', FLOW_SEGMENT_SPACING)
+  mat.setFloat('uRadius', options?.radius ?? PIPE_RADIUS)
   return mat
 }
 
@@ -612,20 +784,17 @@ function buildTubesForPath(
       opacity: 1,
       glowBoost: 0.9,
       additive: false,
+      radius: PIPE_RADIUS,
     })
-    const flowTube = CreateTube(
-      `flow_light_${id}`,
-      {
-        path: pts,
-        radius: PIPE_RADIUS,
-        tessellation: PIPE_TESSELLATION,
-        cap: Mesh.NO_CAP,
-        updatable: false,
-        sideOrientation: Mesh.DOUBLESIDE,
-      },
+    const flowTube = createFlatHeadFlowTube(
       scene,
+      `flow_light_${id}`,
+      pts,
+      PIPE_RADIUS,
+      PIPE_TESSELLATION,
+      FLOW_SEGMENT_SPACING,
     )
-    bakeTubeUvByArcLength(flowTube, len, FLOW_SEGMENT_SPACING)
+    if (!flowTube) throw new Error('empty flow tube')
     flowTube.material = flowMat
     flowTube.isPickable = false
     flowTube.parent = parent
@@ -638,20 +807,17 @@ function buildTubesForPath(
       opacity: 0.45,
       glowBoost: 1.6,
       additive: true,
+      radius: PIPE_RADIUS * FLOW_GLOW_RADIUS_SCALE,
     })
-    const glowTube = CreateTube(
-      `flow_glow_${id}`,
-      {
-        path: pts,
-        radius: PIPE_RADIUS * FLOW_GLOW_RADIUS_SCALE,
-        tessellation: PIPE_TESSELLATION,
-        cap: Mesh.NO_CAP,
-        updatable: false,
-        sideOrientation: Mesh.DOUBLESIDE,
-      },
+    const glowTube = createFlatHeadFlowTube(
       scene,
+      `flow_glow_${id}`,
+      pts,
+      PIPE_RADIUS * FLOW_GLOW_RADIUS_SCALE,
+      PIPE_TESSELLATION,
+      FLOW_SEGMENT_SPACING,
     )
-    bakeTubeUvByArcLength(glowTube, len, FLOW_SEGMENT_SPACING)
+    if (!glowTube) throw new Error('empty glow tube')
     glowTube.material = glowMat
     glowTube.isPickable = false
     glowTube.parent = parent
