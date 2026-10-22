@@ -47,6 +47,9 @@ async function bootstrap(): Promise<void> {
   g.__app = app
   g.__business = business
 
+  // 项目初始化默认视角
+  business.setCameraView('initial')
+
   // 模型已加载：「设备_管道」分组半透明，露出管内流光
   makePipeGroupSemiTransparent(app)
 

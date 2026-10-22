@@ -17,8 +17,13 @@ export const PIPE_GROUP_NAME = '设备_管道'
 /** 管道外壳半透明 alpha（1=不透明） */
 const PIPE_SHELL_ALPHA = 0.88
 
-/** 预设视角：能源站 / 末端（相机位置 + 控制器 target） */
+/** 预设视角：初始化 / 能源站 / 末端（相机位置 + 控制器 target） */
 export const CAMERA_VIEW_PRESETS = {
+  initial: {
+    position: [203.088, 92.723, -95.924],
+    rotationDeg: [-34.39, 126.11, 0],
+    target: [56.892, -31.146, 10.74],
+  },
   energyStation: {
     position: [129.411, 23.344, -87.878],
     rotationDeg: [-28.73, 91.95, 0],
@@ -52,7 +57,7 @@ export interface BusinessFeatures {
   isRoofVisible: () => boolean | null
   /** 将「设备_管道」下 mesh 材质改为半透明 */
   applyPipeGroupTransparency: (alpha?: number) => number
-  /** 按预设切换相机视角（energyStation / terminal） */
+  /** 按预设切换相机视角（initial / energyStation / terminal） */
   setCameraView: (preset: CameraViewPresetId) => boolean
   /** 按自定义位姿切换相机视角 */
   setCameraPose: (pose: CameraPose) => boolean
