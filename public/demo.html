@@ -73,6 +73,114 @@
         pointer-events: none;
         white-space: pre-wrap;
       }
+      .pose-dialog {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.45);
+      }
+      .pose-dialog__panel {
+        width: min(480px, 100%);
+        max-height: min(86vh, 640px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        background: rgba(12, 18, 28, 0.94);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+        color: #e8f0ff;
+      }
+      .pose-dialog__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .pose-dialog__title {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .pose-dialog__close {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: #e8f0ff;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .pose-dialog__close:hover {
+        background: rgba(255, 255, 255, 0.12);
+      }
+      .pose-dialog__body {
+        padding: 10px 12px;
+        overflow: auto;
+      }
+      .pose-dialog__hint {
+        margin: 0 0 8px;
+        color: rgba(232, 240, 255, 0.65);
+        font-size: 12px;
+      }
+      .pose-dialog__code {
+        margin: 0 0 12px;
+        padding: 10px 12px;
+        border-radius: 6px;
+        border: 1px solid rgba(126, 240, 255, 0.28);
+        background: rgba(0, 0, 0, 0.35);
+        color: #7ef0ff;
+        font: 12px/1.5 Consolas, 'Courier New', monospace;
+        white-space: pre;
+        overflow: auto;
+        user-select: text;
+      }
+      .pose-dialog__meta {
+        margin: 0;
+        display: grid;
+        gap: 6px;
+      }
+      .pose-dialog__meta > div {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .pose-dialog__meta dt {
+        margin: 0;
+        color: rgba(232, 240, 255, 0.7);
+      }
+      .pose-dialog__meta dd {
+        margin: 0;
+        text-align: right;
+        word-break: break-all;
+        font: 12px/1.4 Consolas, 'Courier New', monospace;
+      }
+      .pose-dialog__footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 6px;
+        padding: 8px 12px 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .pose-dialog__footer button {
+        padding: 6px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #e8f0ff;
+        cursor: pointer;
+      }
+      .pose-dialog__footer button:hover {
+        background: rgba(255, 255, 255, 0.12);
+      }
     </style>
   </head>
   <body>
@@ -82,6 +190,9 @@
         <span class="meta">推送 model-update(2).json · MODEL_UPDATE</span>
         <button type="button" id="btnPush">立即推送一次</button>
         <button type="button" id="btnClearSelection">取消选中</button>
+        <button type="button" id="btnGetPose" title="读取当前相机与控制器位姿，用于修改预设视角">
+          获取当前视角
+        </button>
         <span class="meta" id="status">等待三维加载…</span>
         <span class="meta" id="flowStatus">线：-</span>
       </div>
@@ -155,11 +266,121 @@
         log(`→ MODEL_UPDATE ×${payload.objects.length} (${sample}${payload.objects.length > 4 ? ', …' : ''})`)
       }
 
+      function formatVec3(v) {
+        return `[${v.join(', ')}]`
+      }
+
+      function formatPosePresetCode(snap) {
+        return [
+          '{',
+          `  position: ${formatVec3(snap.cameraPosition)},`,
+          `  rotationDeg: ${formatVec3(snap.cameraRotationDeg)},`,
+          `  target: ${formatVec3(snap.controllerTarget)},`,
+          '}',
+        ].join('\n')
+      }
+
+      function showCameraPoseDialog(snap) {
+        document.getElementById('pose-dialog')?.remove()
+
+        const presetCode = formatPosePresetCode(snap)
+        const overlay = document.createElement('div')
+        overlay.id = 'pose-dialog'
+        overlay.className = 'pose-dialog'
+        overlay.innerHTML = `
+          <div class="pose-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="pose-title">
+            <div class="pose-dialog__header">
+              <span id="pose-title" class="pose-dialog__title">当前相机 / 控制器位姿</span>
+              <button type="button" class="pose-dialog__close" aria-label="关闭">×</button>
+            </div>
+            <div class="pose-dialog__body">
+              <p class="pose-dialog__hint">可复制下方代码到 features.ts 的 CAMERA_VIEW_PRESETS</p>
+              <pre class="pose-dialog__code"></pre>
+              <dl class="pose-dialog__meta">
+                <div><dt>相机位置</dt><dd></dd></div>
+                <div><dt>旋转 (°)</dt><dd></dd></div>
+                <div><dt>控制器 target</dt><dd></dd></div>
+                <div><dt>alpha / beta / radius</dt><dd></dd></div>
+              </dl>
+            </div>
+            <div class="pose-dialog__footer">
+              <button type="button" class="pose-dialog__copy">复制预设代码</button>
+              <button type="button" class="pose-dialog__ok">关闭</button>
+            </div>
+          </div>
+        `
+
+        const codeEl = overlay.querySelector('.pose-dialog__code')
+        codeEl.textContent = presetCode
+
+        const dds = overlay.querySelectorAll('.pose-dialog__meta dd')
+        dds[0].textContent = formatVec3(snap.cameraPosition)
+        dds[1].textContent = formatVec3(snap.cameraRotationDeg)
+        dds[2].textContent = formatVec3(snap.controllerTarget)
+        dds[3].textContent = `${snap.alpha} / ${snap.beta} / ${snap.radius}`
+
+        const close = () => {
+          overlay.remove()
+          window.removeEventListener('keydown', onKey)
+        }
+        const onKey = (e) => {
+          if (e.key === 'Escape') close()
+        }
+
+        overlay.querySelector('.pose-dialog__close').addEventListener('click', close)
+        overlay.querySelector('.pose-dialog__ok').addEventListener('click', close)
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) close()
+        })
+
+        const copyBtn = overlay.querySelector('.pose-dialog__copy')
+        copyBtn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(presetCode)
+            copyBtn.textContent = '已复制'
+            window.setTimeout(() => {
+              copyBtn.textContent = '复制预设代码'
+            }, 1500)
+          } catch {
+            const range = document.createRange()
+            range.selectNodeContents(codeEl)
+            const sel = window.getSelection()
+            sel?.removeAllRanges()
+            sel?.addRange(range)
+            copyBtn.textContent = '请手动复制'
+          }
+        })
+
+        window.addEventListener('keydown', onKey)
+        document.body.appendChild(overlay)
+      }
+
       document.getElementById('btnPush').addEventListener('click', pushUpdate)
 
       document.getElementById('btnClearSelection').addEventListener('click', () => {
         if (!postToViewer({ type: 'CLEAR_DEVICE_SELECTION' })) return
         log('→ CLEAR_DEVICE_SELECTION')
+      })
+
+      document.getElementById('btnGetPose').addEventListener('click', () => {
+        const win = iframe.contentWindow
+        const business = win && win.__business
+        if (!business || typeof business.getCameraPose !== 'function') {
+          window.alert('三维未就绪')
+          return
+        }
+        const snap = business.getCameraPose()
+        if (!snap) {
+          window.alert('相机未就绪')
+          return
+        }
+        if (typeof business.printCameraPose === 'function') {
+          business.printCameraPose()
+        }
+        showCameraPoseDialog(snap)
+        log(
+          `← 当前视角 position=${formatVec3(snap.cameraPosition)} target=${formatVec3(snap.controllerTarget)}`,
+        )
       })
 
       window.addEventListener('message', (event) => {
