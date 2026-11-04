@@ -30,8 +30,8 @@ const PIPE_RADIUS = 0.32
 /** 外层柔光（模拟 SelectiveBloom 光晕） */
 const FLOW_GLOW_RADIUS_SCALE = 0.05
 /**
- * 流光渲染组：晚于管道外壳（组 1），且保留组 0 实体深度
- * → 不被管道遮挡，仍被厂房/设备等实体遮挡
+ * 流光与管道外壳同组。外壳 alphaIndex=0，流光为 1/2，因此画在管壁之上。
+ * 组 2 不清理深度：沿用组 0 厂房/设备深度。场地与背景地面不写深度，埋地管段仍可见。
  */
 const FLOW_RENDERING_GROUP = 2
 /** 管道截面边数 */

@@ -14,8 +14,21 @@ export const ROOF_PART_NAME = '屋顶_控制显隐'
 /** 管道分组：加载后将其下 mesh 材质改为半透明，便于看清管内流光 */
 export const PIPE_GROUP_NAME = '设备_管道'
 
+/**
+ * 场景地面：场地（路/草）和 bg（背景地面）。
+ * 二者盖在埋地管段之上，且透明修复会强制写深度，导致管道被地面裁掉。
+ */
+const GROUND_NODE_NAMES = ['场地', 'bg'] as const
+
 /** 管道外壳半透明 alpha（1=不透明） */
 const PIPE_SHELL_ALPHA = 0.88
+
+/**
+ * 管道外壳渲染组：晚于地面（组 1），与流光同组。
+ * alphaIndex 低于流光（1/2）和设备高亮（910+），保证流光画在管壁之上。
+ */
+const PIPE_SHELL_RENDER_GROUP = 2
+const PIPE_SHELL_ALPHA_INDEX = 0
 
 /** 预设视角：初始化 / 能源站 / 末端（相机位置 + 控制器 target） */
 export const CAMERA_VIEW_PRESETS = {
@@ -103,6 +116,54 @@ function applyPipeNoDepthWrite(mat: Material | null): void {
 }
 
 /**
+ * 场景地面不写深度，并保持在组 1（实体建筑之后、管道外壳之前）。
+ * 组 2 仍沿用组 0 的深度，埋地管段可以画在地面上，厂房和设备继续遮挡管道。
+ */
+function revealPipesUnderGround(app: AppOrchestrator): void {
+  const scene = app.getContext()?.scene
+  const model = app.getModelModule()
+  if (!scene) return
+
+  scene.setRenderingAutoClearDepthStencil(1, false, false, false)
+  scene.setRenderingAutoClearDepthStencil(PIPE_SHELL_RENDER_GROUP, false, false, false)
+
+  const seen = new Set<AbstractMesh>()
+  let count = 0
+
+  for (const groundName of GROUND_NODE_NAMES) {
+    const nodes = model.findPartNodes(groundName)
+    if (!nodes.length) {
+      console.warn(`[business] ground "${groundName}" not found`)
+      continue
+    }
+
+    for (const node of nodes) {
+      const meshes: AbstractMesh[] = []
+      if ('getTotalVertices' in node && typeof (node as AbstractMesh).getTotalVertices === 'function') {
+        const self = node as AbstractMesh
+        if (self.getTotalVertices() > 0) meshes.push(self)
+      }
+      if ('getChildMeshes' in node && typeof node.getChildMeshes === 'function') {
+        for (const child of node.getChildMeshes(false)) {
+          if (child.getTotalVertices() > 0) meshes.push(child)
+        }
+      }
+
+      for (const mesh of meshes) {
+        if (seen.has(mesh)) continue
+        seen.add(mesh)
+        applyPipeNoDepthWrite(mesh.material)
+        // bg 在组 0 透明阶段先画；场地留在组 1，盖住背景地面，仍早于组 2 的管道
+        mesh.renderingGroupId = groundName === 'bg' ? 0 : 1
+        count += 1
+      }
+    }
+  }
+
+  console.info(`[business] ground meshes no longer occlude pipes: ${count}`)
+}
+
+/**
  * 将「设备_管道」分组下所有 mesh 材质改为半透明，便于显示管内流光
  * @returns 处理的 mesh 数量
  */
@@ -134,8 +195,9 @@ export function makePipeGroupSemiTransparent(app: AppOrchestrator, alpha = PIPE_
       if (seen.has(mesh) || !mesh.material) continue
       seen.add(mesh)
       mesh.material = setMaterialSemiTransparent(mesh.material, alpha, cloneCache)
-      // 组 1：在实体之后、流光之前绘制管道外壳
-      mesh.renderingGroupId = 1
+      // 组 2：画在场地地面之后；alphaIndex 低于流光，避免管壁盖住流光
+      mesh.renderingGroupId = PIPE_SHELL_RENDER_GROUP
+      mesh.alphaIndex = PIPE_SHELL_ALPHA_INDEX
       count += 1
     }
   }
@@ -146,8 +208,12 @@ export function makePipeGroupSemiTransparent(app: AppOrchestrator, alpha = PIPE_
   // fixTransparentMaterials 会给透明材质重新打开深度写入，管道需再次关闭
   for (const mesh of seen) {
     applyPipeNoDepthWrite(mesh.material)
-    mesh.renderingGroupId = 1
+    mesh.renderingGroupId = PIPE_SHELL_RENDER_GROUP
+    mesh.alphaIndex = PIPE_SHELL_ALPHA_INDEX
   }
+
+  // 放在透明修复之后：地面透明材质会被重新打开深度写入
+  revealPipesUnderGround(app)
 
   console.info(`[business] pipe group "${PIPE_GROUP_NAME}" semi-transparent meshes: ${count}`)
   return count
