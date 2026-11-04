@@ -175,6 +175,11 @@ export function createDeviceStatusBadge(
     }
   }
 
+  /** 参考距离：约此距离时牌子为 1 倍；拉远按比例缩小 */
+  const BADGE_REF_DISTANCE = 48
+  const BADGE_MIN_SCALE = 0.32
+  const BADGE_MAX_SCALE = 4
+
   const observer = scene.onBeforeRenderObservable.add(() => {
     if (!badges.size) return
     const canvas = engine.getRenderingCanvas()
@@ -183,6 +188,7 @@ export function createDeviceStatusBadge(
     const oy = canvasRect?.top ?? 0
     const viewport = camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
     const transform = scene.getTransformMatrix()
+    const camPos = camera.globalPosition
 
     for (const state of badges.values()) {
       try {
@@ -199,9 +205,16 @@ export function createDeviceStatusBadge(
         continue
       }
 
+      const dist = Vector3.Distance(camPos, worldPos)
+      const scale = Math.min(
+        BADGE_MAX_SCALE,
+        Math.max(BADGE_MIN_SCALE, BADGE_REF_DISTANCE / Math.max(dist, 1)),
+      )
+
       state.el.style.visibility = 'visible'
       state.el.style.left = `${ox + projected.x}px`
       state.el.style.top = `${oy + projected.y}px`
+      state.el.style.setProperty('--badge-scale', scale.toFixed(3))
     }
   })
 

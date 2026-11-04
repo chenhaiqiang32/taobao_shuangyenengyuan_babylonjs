@@ -370,11 +370,13 @@ body {
   --badge-border: rgba(255, 255, 255, 0.14);
   --badge-accent: #9aa3b2;
   --badge-text: rgba(255, 255, 255, 0.92);
+  --badge-scale: 1;
   position: fixed;
   left: 0;
   top: 0;
-  /* 锚点落在底部箭头尖端 */
-  transform: translate(-50%, calc(-100% - 6px));
+  /* 锚点落在底部箭头尖端；拉远时整体缩小，锚点仍贴设备 */
+  transform: translate(-50%, calc(-100% - 6px)) scale(var(--badge-scale));
+  transform-origin: center bottom;
   display: flex;
   align-items: center;
   gap: 6px;
