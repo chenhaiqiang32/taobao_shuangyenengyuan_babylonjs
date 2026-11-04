@@ -14,6 +14,9 @@ export const ROOF_PART_NAME = '屋顶_控制显隐'
 /** 管道分组：加载后将其下 mesh 设为不透明，并排到地面之后便于显示埋地管段 */
 export const PIPE_GROUP_NAME = '设备_管道'
 
+/** 强弱电 / 母线槽 / 电缆箱分组：悬停显示节点名浮窗 */
+export const CABLE_GROUP_NAME = '设备_电揽'
+
 /**
  * 场景地面：场地（路/草）和 bg（背景地面）。
  * 二者盖在埋地管段之上，且透明修复会强制写深度，导致管道被地面裁掉。
@@ -53,6 +56,8 @@ export interface BusinessFeatures {
   readonly ROOF_PART_NAME: string
   /** 管道分组名称常量 */
   readonly PIPE_GROUP_NAME: string
+  /** 强弱电电缆分组名称常量 */
+  readonly CABLE_GROUP_NAME: string
   /** 设置任意模型部件显隐 */
   setPartVisible: (partName: string, visible: boolean) => boolean
   /** 切换任意模型部件显隐，返回切换后是否可见；未找到返回 null */
@@ -226,6 +231,7 @@ export function createBusinessFeatures(app: AppOrchestrator): BusinessFeatures {
   return {
     ROOF_PART_NAME,
     PIPE_GROUP_NAME,
+    CABLE_GROUP_NAME,
 
     setPartVisible(partName: string, visible: boolean): boolean {
       return model().setPartVisible(partName, visible)

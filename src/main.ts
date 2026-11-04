@@ -12,6 +12,7 @@ import { postOnLoaded, postOnLoading, postToParent } from './message/postMessage
 import { createDeviceInteraction } from './business/deviceInteraction'
 import { createDeviceStatusOverlay } from './business/deviceStatusOverlay'
 import { createDeviceStatusBadge } from './business/deviceStatusBadge'
+import { createCableHoverLabel } from './business/cableHoverLabel'
 import { createPipeFlow, type PipeFlowApi } from './business/pipeFlow'
 import { resetCoolingTowerFans, syncCoolingTowerFans } from './business/coolingTowerFan'
 import { MSG_PIPE_FLOW_DEBUG } from './message/types'
@@ -60,6 +61,8 @@ async function bootstrap(): Promise<void> {
       deviceUi?.selectDevice(objectName)
     },
   })
+  // 强弱电 / 母线槽 / 电缆箱：悬停显示节点名（无高亮）
+  createCableHoverLabel(app)
   const pipeFlow = await createPipeFlow(app)
   g.__pipeFlow = pipeFlow
 

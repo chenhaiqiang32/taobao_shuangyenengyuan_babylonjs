@@ -145,7 +145,7 @@ export function createDeviceStatusBadge(
       el.setAttribute('role', 'button')
       el.tabIndex = 0
       el.innerHTML =
-        '<span class="device-status-badge__text"></span><span class="device-status-badge__arrow" aria-hidden="true"></span>'
+        '<span class="device-status-badge__dot" aria-hidden="true"></span><span class="device-status-badge__text"></span><span class="device-status-badge__arrow" aria-hidden="true"></span>'
       el.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
