@@ -4,7 +4,6 @@ import { AppOrchestrator } from './core/app'
 // import { createParamsPanel } from './ui/paramsPanel'
 import {
   createBusinessFeatures,
-  makePipeGroupSemiTransparent,
   type BusinessFeaturesGlobal,
 } from './business/features'
 import { createRoofToggleButton } from './ui/roofToggleButton'
@@ -49,9 +48,6 @@ async function bootstrap(): Promise<void> {
 
   // 项目初始化默认视角
   business.setCameraView('initial')
-
-  // 模型已加载：「设备_管道」分组半透明，露出管内流光
-  makePipeGroupSemiTransparent(app)
 
   // 右上角业务工具条：当前工况 + 屋顶显隐 + 视角切换
   const toolbar = createRoofToggleButton(business)

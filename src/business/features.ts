@@ -11,7 +11,7 @@ import type { CameraPose, CameraPoseSnapshot } from '../modules/camera'
 /** 屋顶显隐控制部件名称 */
 export const ROOF_PART_NAME = '屋顶_控制显隐'
 
-/** 管道分组：加载后将其下 mesh 材质改为半透明，便于看清管内流光 */
+/** 管道分组：加载后将其下 mesh 设为不透明，并排到地面之后便于显示埋地管段 */
 export const PIPE_GROUP_NAME = '设备_管道'
 
 /**
@@ -19,9 +19,6 @@ export const PIPE_GROUP_NAME = '设备_管道'
  * 二者盖在埋地管段之上，且透明修复会强制写深度，导致管道被地面裁掉。
  */
 const GROUND_NODE_NAMES = ['场地', 'bg'] as const
-
-/** 管道外壳半透明 alpha（1=不透明） */
-const PIPE_SHELL_ALPHA = 0.88
 
 /**
  * 管道外壳渲染组：晚于地面（组 1），与流光同组。
@@ -68,8 +65,8 @@ export interface BusinessFeatures {
   setRoofVisible: (visible: boolean) => boolean
   /** 屋顶当前是否可见 */
   isRoofVisible: () => boolean | null
-  /** 将「设备_管道」下 mesh 材质改为半透明 */
-  applyPipeGroupTransparency: (alpha?: number) => number
+  /** 将「设备_管道」下 mesh 材质改为不透明，并排到地面之后 */
+  applyPipeGroupTransparency: () => number
   /** 按预设切换相机视角（initial / energyStation / terminal） */
   setCameraView: (preset: CameraViewPresetId) => boolean
   /** 按自定义位姿切换相机视角 */
@@ -80,25 +77,26 @@ export interface BusinessFeatures {
   printCameraPose: () => CameraPoseSnapshot | null
 }
 
-function setMaterialSemiTransparent(mat: Material, alpha: number, cloneCache: Map<Material, Material>): Material {
+function setMaterialOpaque(mat: Material, cloneCache: Map<Material, Material>): Material {
   const cached = cloneCache.get(mat)
   if (cached) return cached
 
   if (mat instanceof MultiMaterial) {
-    const clone = mat.clone(`${mat.name}_pipeAlpha`) ?? mat
+    const clone = mat.clone(`${mat.name}_pipeOpaque`) ?? mat
     clone.subMaterials = mat.subMaterials.map((sub) =>
-      sub ? setMaterialSemiTransparent(sub, alpha, cloneCache) : sub,
+      sub ? setMaterialOpaque(sub, cloneCache) : sub,
     )
     cloneCache.set(mat, clone)
     return clone
   }
 
-  // 克隆避免管道半透明影响共用同一材质的其它部件
-  const clone = mat.clone(`${mat.name}_pipeAlpha`) ?? mat
-  clone.alpha = alpha
-  clone.transparencyMode = Material.MATERIAL_ALPHABLEND
-  // 管道不写深度：流光可穿过管壁显示，仍受其它实体模型深度遮挡
-  applyPipeNoDepthWrite(clone)
+  // 克隆避免管道材质改动影响共用同一材质的其它部件
+  const clone = mat.clone(`${mat.name}_pipeOpaque`) ?? mat
+  clone.alpha = 1
+  clone.transparencyMode = Material.MATERIAL_OPAQUE
+  clone.needDepthPrePass = false
+  clone.forceDepthWrite = false
+  clone.disableDepthWrite = false
   cloneCache.set(mat, clone)
   return clone
 }
@@ -164,10 +162,10 @@ function revealPipesUnderGround(app: AppOrchestrator): void {
 }
 
 /**
- * 将「设备_管道」分组下所有 mesh 材质改为半透明，便于显示管内流光
+ * 将「设备_管道」分组下所有 mesh 材质改为不透明，并排到地面之后显示埋地管段
  * @returns 处理的 mesh 数量
  */
-export function makePipeGroupSemiTransparent(app: AppOrchestrator, alpha = PIPE_SHELL_ALPHA): number {
+export function makePipeGroupSemiTransparent(app: AppOrchestrator): number {
   const model = app.getModelModule()
   const nodes = model.findPartNodes(PIPE_GROUP_NAME)
   if (!nodes.length) {
@@ -194,7 +192,7 @@ export function makePipeGroupSemiTransparent(app: AppOrchestrator, alpha = PIPE_
     for (const mesh of meshes) {
       if (seen.has(mesh) || !mesh.material) continue
       seen.add(mesh)
-      mesh.material = setMaterialSemiTransparent(mesh.material, alpha, cloneCache)
+      mesh.material = setMaterialOpaque(mesh.material, cloneCache)
       // 组 2：画在场地地面之后；alphaIndex 低于流光，避免管壁盖住流光
       mesh.renderingGroupId = PIPE_SHELL_RENDER_GROUP
       mesh.alphaIndex = PIPE_SHELL_ALPHA_INDEX
@@ -205,9 +203,8 @@ export function makePipeGroupSemiTransparent(app: AppOrchestrator, alpha = PIPE_
   // 统一修复透明材质深度/排序，避免旋转时面片闪烁消失
   model.fixTransparentMaterials()
 
-  // fixTransparentMaterials 会给透明材质重新打开深度写入，管道需再次关闭
+  // 管道保持不透明深度写入；渲染组在透明修复后重新确认
   for (const mesh of seen) {
-    applyPipeNoDepthWrite(mesh.material)
     mesh.renderingGroupId = PIPE_SHELL_RENDER_GROUP
     mesh.alphaIndex = PIPE_SHELL_ALPHA_INDEX
   }
@@ -215,7 +212,7 @@ export function makePipeGroupSemiTransparent(app: AppOrchestrator, alpha = PIPE_
   // 放在透明修复之后：地面透明材质会被重新打开深度写入
   revealPipesUnderGround(app)
 
-  console.info(`[business] pipe group "${PIPE_GROUP_NAME}" semi-transparent meshes: ${count}`)
+  console.info(`[business] pipe group "${PIPE_GROUP_NAME}" opaque meshes: ${count}`)
   return count
 }
 
@@ -254,8 +251,8 @@ export function createBusinessFeatures(app: AppOrchestrator): BusinessFeatures {
       return model().isPartVisible(ROOF_PART_NAME)
     },
 
-    applyPipeGroupTransparency(alpha?: number): number {
-      return makePipeGroupSemiTransparent(app, alpha)
+    applyPipeGroupTransparency(): number {
+      return makePipeGroupSemiTransparent(app)
     },
 
     setCameraView(preset: CameraViewPresetId): boolean {
